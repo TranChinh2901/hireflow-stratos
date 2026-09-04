@@ -1,0 +1,95 @@
+# Gradle and Kotlin build state
+.gradle/
+.kotlin/
+**/build/
+/out/
+.gradletasknamecache
+*.class
+*.dex
+*.hprof
+*.profraw
+*.profdata
+
+# Local Android/Gradle configuration
+local.properties
+secrets.properties
+keystore.properties
+signing.properties
+signing_keys.json
+
+# Android Studio / IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+/captures/
+.externalNativeBuild/
+.cxx/
+.navigation/
+# Other IDEs
+.vscode/
+.fleet/
+*.code-workspace
+
+# App packages and signing files
+*.apk
+*.aab
+*.apks
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+*.der
+*.mobileprovision
+*.idsig
+
+# Private service credentials (never ship these in the Android repository)
+service-account*.json
+*-service-account.json
+firebase-adminsdk-*.json
+credentials.json
+# Firebase / Google services config (contains api keys)
+google-services.json
+google-services-info.plist
+GoogleService-Info.plist
+firebase-appdistribution-*.apk
+crashlytics.properties
+crashlytics-build.properties
+fabric.properties
+
+# Supabase CLI local state
+/supabase/.branches/
+/supabase/.temp/
+/.supabase/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Local databases and exported user data
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Generated release and analysis artifacts
+/release/
+/app/release/
+*.mapping
+/reports/
+/benchmarkData/
+
+# Operating system and temporary files
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+*~

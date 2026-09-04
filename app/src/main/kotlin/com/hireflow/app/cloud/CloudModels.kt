@@ -1,0 +1,73 @@
+package com.hireflow.app.cloud
+
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
+@Serializable
+data class UserProfileDto(
+    val id: String,
+    @SerialName("organization_id") val organizationId: String,
+    @SerialName("full_name") val fullName: String,
+    val role: String,
+    val email: String? = null,
+    val phone: String = "",
+    val department: String = "Human Resources",
+    @SerialName("job_title") val jobTitle: String = "Recruitment Specialist"
+)
+
+@Serializable
+data class ProfileUpdateDto(
+    @SerialName("full_name") val fullName: String,
+    val phone: String,
+    val department: String,
+    @SerialName("job_title") val jobTitle: String
+)
+
+@Serializable
+data class CandidateDto(
+    val id: String,
+    @SerialName("organization_id") val organizationId: String,
+    @SerialName("full_name") val fullName: String,
+    val position: String,
+    val email: String,
+    val phone: String,
+    @SerialName("experience_years") val experienceYears: Int,
+    val skills: List<String>,
+    val stage: String,
+    val notes: String,
+    @SerialName("cv_path") val cvPath: String? = null,
+    @SerialName("updated_at") val updatedAt: String
+)
+
+@Serializable
+data class InterviewDto(
+    val id: String,
+    @SerialName("organization_id") val organizationId: String,
+    @SerialName("candidate_id") val candidateId: String,
+    @SerialName("scheduled_at") val scheduledAt: String,
+    @SerialName("duration_minutes") val durationMinutes: Int,
+    val format: String,
+    @SerialName("interviewer_name") val interviewerName: String,
+    @SerialName("interviewer_id") val interviewerId: String? = null,
+    val round: String,
+    val checklist: List<String>,
+    val completed: Boolean,
+    @SerialName("updated_at") val updatedAt: String
+)
+
+@Serializable
+data class ScorecardDto(
+    val id: String,
+    @SerialName("organization_id") val organizationId: String,
+    @SerialName("candidate_id") val candidateId: String,
+    @SerialName("evaluator_id") val evaluatorId: String,
+    val technical: Int,
+    val communication: Int,
+    @SerialName("problem_solving") val problemSolving: Int,
+    @SerialName("culture_fit") val cultureFit: Int,
+    val strengths: String,
+    val improvements: String,
+    val notes: String,
+    val conclusion: String,
+    @SerialName("updated_at") val updatedAt: String
+)

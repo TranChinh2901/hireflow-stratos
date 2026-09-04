@@ -1,0 +1,4 @@
+# Copy this file to local.properties and keep it outside version control.
+sdk.dir=/home/your-user/Android/Sdk
+SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+SUPABASE_PUBLISHABLE_KEY=sb_publishable_YOUR_KEY
