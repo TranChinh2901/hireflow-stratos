@@ -1,44 +1,74 @@
 package com.hireflow.app.ui.screens
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Badge
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Email
 import androidx.compose.material.icons.rounded.FilterList
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.PersonSearch
+import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.hireflow.app.data.CandidateEntity
 import com.hireflow.app.data.RecruitmentStage
 import com.hireflow.app.ui.components.CandidateRow
@@ -113,41 +143,153 @@ fun CandidatesScreen(
     )
 }
 
+private data class ExperienceOption(val key: String, val label: String, val years: Int)
+
+private val experienceOptions = listOf(
+    ExperienceOption("intern", "Intern · 0 năm", 0),
+    ExperienceOption("fresher", "Fresher · <1 năm", 0),
+    ExperienceOption("junior", "Junior · 1–2 năm", 1),
+    ExperienceOption("middle", "Middle · 3–4 năm", 3),
+    ExperienceOption("senior", "Senior · 5+ năm", 5)
+)
+
+private val skillOptions = listOf(
+    "Kotlin", "Java", "Android", "Jetpack Compose", "MVVM", "Coroutines",
+    "Room", "REST API", "Git", "SQL", "Figma", "Testing", "Docker", "AWS"
+)
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AddCandidateDialog(onDismiss: () -> Unit, onSave: (CandidateEntity) -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
     var position by rememberSaveable { mutableStateOf("") }
     var email by rememberSaveable { mutableStateOf("") }
     var phone by rememberSaveable { mutableStateOf("") }
-    var experience by rememberSaveable { mutableStateOf("") }
-    var skills by rememberSaveable { mutableStateOf("") }
-    val valid = name.isNotBlank() && position.isNotBlank()
+    var selectedExperience by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedSkills by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    val experience = experienceOptions.firstOrNull { it.key == selectedExperience }
+    val valid = name.isNotBlank() && position.isNotBlank() && experience != null && selectedSkills.isNotEmpty()
 
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text("Thêm ứng viên") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                CompactField(name, { name = it }, "Họ và tên *")
-                CompactField(position, { position = it }, "Vị trí ứng tuyển *")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    CompactField(email, { email = it }, "Email", Modifier.weight(1f))
-                    CompactField(phone, { phone = it }, "Điện thoại", Modifier.weight(1f), KeyboardType.Phone)
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(.94f)
+                .fillMaxHeight(.9f)
+                .widthIn(max = 520.dp)
+                .heightIn(max = 700.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 8.dp,
+            shadowElevation = 12.dp
+        ) {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 10.dp, top = 12.dp, bottom = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        Modifier.size(38.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(12.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Rounded.PersonAdd, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(21.dp))
+                    }
+                    Column(Modifier.weight(1f).padding(start = 11.dp)) {
+                        Text("Thêm ứng viên", fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                        Text("Tạo hồ sơ mới cho pipeline", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, "Đóng") }
                 }
-                CompactField(experience, { experience = it.filter(Char::isDigit) }, "Số năm kinh nghiệm", keyboardType = KeyboardType.Number)
-                CompactField(skills, { skills = it }, "Kỹ năng (phân cách bằng dấu phẩy)")
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .65f))
+
+                Column(
+                    modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    FormSectionTitle("Thông tin cơ bản")
+                    CompactField(name, { name = it }, "Họ và tên *", Icons.Rounded.Person)
+                    CompactField(position, { position = it }, "Vị trí ứng tuyển *", Icons.Rounded.Badge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CompactField(email, { email = it }, "Email", Icons.Rounded.Email, Modifier.weight(1f), KeyboardType.Email)
+                        CompactField(phone, { phone = it }, "Điện thoại", Icons.Rounded.Phone, Modifier.weight(1f), KeyboardType.Phone)
+                    }
+
+                    FormSectionTitle("Kinh nghiệm *", "Chọn cấp độ phù hợp")
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        experienceOptions.forEach { option ->
+                            FilterChip(
+                                selected = selectedExperience == option.key,
+                                onClick = { selectedExperience = option.key },
+                                label = { Text(option.label, fontSize = 12.sp) },
+                                leadingIcon = if (selectedExperience == option.key) {
+                                    { Icon(Icons.Rounded.Check, null, modifier = Modifier.size(15.dp)) }
+                                } else null,
+                                shape = RoundedCornerShape(10.dp),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            )
+                        }
+                    }
+
+                    FormSectionTitle("Kỹ năng *", "Chọn một hoặc nhiều kỹ năng")
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        skillOptions.forEach { skill ->
+                            val selected = skill in selectedSkills
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    selectedSkills = if (selected) selectedSkills - skill else selectedSkills + skill
+                                },
+                                label = { Text(skill, fontSize = 12.sp) },
+                                leadingIcon = if (selected) {
+                                    { Icon(Icons.Rounded.Check, null, modifier = Modifier.size(15.dp)) }
+                                } else null,
+                                shape = RoundedCornerShape(10.dp),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .65f))
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp)) { Text("Hủy") }
+                    Button(
+                        onClick = {
+                            onSave(
+                                CandidateEntity(
+                                    name = name.trim(),
+                                    position = position.trim(),
+                                    email = email.trim(),
+                                    phone = phone.trim(),
+                                    experienceYears = experience?.years ?: 0,
+                                    skills = selectedSkills.joinToString(", ")
+                                )
+                            )
+                        },
+                        enabled = valid,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1.6f).height(44.dp)
+                    ) {
+                        Icon(Icons.Rounded.Add, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.size(6.dp))
+                        Text("Thêm ứng viên", fontWeight = FontWeight.Bold)
+                    }
+                }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    onSave(CandidateEntity(name = name.trim(), position = position.trim(), email = email.trim(), phone = phone.trim(), experienceYears = experience.toIntOrNull() ?: 0, skills = skills.trim()))
-                },
-                enabled = valid
-            ) { Text("Thêm ứng viên") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Hủy") } }
-    )
+        }
+    }
 }
 
 @Composable
@@ -155,15 +297,61 @@ private fun CompactField(
     value: String,
     onValueChange: (String) -> Unit,
     label: String,
+    icon: ImageVector,
     modifier: Modifier = Modifier.fillMaxWidth(),
     keyboardType: KeyboardType = KeyboardType.Text
 ) {
-    OutlinedTextField(
+    val interactionSource = remember { MutableInteractionSource() }
+    val focused by interactionSource.collectIsFocusedAsState()
+    val shape = RoundedCornerShape(12.dp)
+    val borderColor = if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+    BasicTextField(
         value = value,
         onValueChange = onValueChange,
-        label = { Text(label) },
+        textStyle = MaterialTheme.typography.bodyMedium.copy(
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 13.sp
+        ),
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-        modifier = modifier
+        interactionSource = interactionSource,
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        modifier = modifier,
+        decorationBox = { innerTextField ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .3f), shape)
+                    .border(if (focused) 1.5.dp else 1.dp, borderColor, shape)
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    icon,
+                    null,
+                    tint = if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.size(9.dp))
+                Box(Modifier.weight(1f)) {
+                    if (value.isEmpty()) {
+                        Text(label, fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    innerTextField()
+                }
+            }
+        }
     )
+}
+
+@Composable
+private fun FormSectionTitle(title: String, subtitle: String? = null) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+        if (subtitle != null) {
+            Spacer(Modifier.size(8.dp))
+            Text(subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }
