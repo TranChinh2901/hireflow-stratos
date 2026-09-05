@@ -185,29 +185,44 @@ fun CandidateRow(
         elevation = CardDefaults.cardElevation(0.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.Top) {
-            InitialAvatar(candidate.name, Modifier.size(if (compact) 36.dp else 40.dp))
-            Spacer(Modifier.size(10.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(candidate.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(candidate.position, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (!compact) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("${candidate.experienceYears} năm kinh nghiệm", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+        Box(Modifier.fillMaxWidth()) {
+            Row(Modifier.padding(10.dp).fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                InitialAvatar(candidate.name, Modifier.size(if (compact) 36.dp else 40.dp))
+                Spacer(Modifier.size(10.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            candidate.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
                         StagePill(candidate.recruitmentStage)
                     }
-                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        candidate.skillList.take(3).forEach { skill ->
-                            Text(skill, style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(5.dp)).padding(horizontal = 6.dp, vertical = 2.dp))
+                    Text(candidate.position, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (!compact) {
+                        Text(
+                            "${candidate.experienceYears} năm kinh nghiệm",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        androidx.compose.foundation.layout.FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(end = if (trailing != null) 32.dp else 0.dp)
+                        ) {
+                            candidate.skillList.take(3).forEach { skill ->
+                                Text(skill, style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(5.dp)).padding(horizontal = 6.dp, vertical = 2.dp))
+                            }
                         }
                     }
                 }
             }
             if (trailing != null) {
-                Spacer(Modifier.size(4.dp))
-                Box(Modifier.padding(top = 2.dp)) { trailing() }
+                Box(Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 8.dp)) { trailing() }
             }
         }
     }
