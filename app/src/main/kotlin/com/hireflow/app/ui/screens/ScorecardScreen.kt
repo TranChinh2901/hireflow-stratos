@@ -58,8 +58,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hireflow.app.data.CandidateEntity
+import com.hireflow.app.data.InterviewEntity
 import com.hireflow.app.data.ScorecardEntity
 import com.hireflow.app.domain.ScoreCalculator
+import com.hireflow.app.domain.RecruitmentRules
 import com.hireflow.app.ui.components.EmptyState
 import com.hireflow.app.ui.components.InfoCard
 import com.hireflow.app.ui.components.InitialAvatar
@@ -75,25 +77,35 @@ import kotlinx.coroutines.launch
 @Composable
 fun ScorecardScreen(
     candidates: List<CandidateEntity>,
+    interviews: List<InterviewEntity>,
     scorecards: List<ScorecardEntity>,
+    evaluatorId: String?,
     initialCandidateId: Long?,
     onSave: (ScorecardEntity) -> Unit,
-    onMoveNext: (CandidateEntity) -> Unit,
     onBack: (() -> Unit)?
 ) {
-    var selectedId by rememberSaveable(initialCandidateId) { mutableStateOf(initialCandidateId ?: candidates.firstOrNull()?.id) }
-    val candidate = candidates.firstOrNull { it.id == selectedId }
-    val existing = scorecards.firstOrNull { it.candidateId == selectedId }
+    val evaluatorScorecards = scorecards.filter { it.evaluatorId == evaluatorId }
+    val availableCandidates = candidates.filter { candidate ->
+        RecruitmentRules.canReview(candidate, interviews) || evaluatorScorecards.any { it.candidateId == candidate.id }
+    }
+    var selectedId by rememberSaveable(initialCandidateId, availableCandidates.firstOrNull()?.id) {
+        mutableStateOf(
+            initialCandidateId?.takeIf { id -> availableCandidates.any { it.id == id } }
+                ?: availableCandidates.firstOrNull()?.id
+        )
+    }
+    val candidate = availableCandidates.firstOrNull { it.id == selectedId }
+    val existing = evaluatorScorecards.firstOrNull { it.candidateId == selectedId }
     var blindMode by rememberSaveable { mutableStateOf(true) }
     var expanded by remember { mutableStateOf(false) }
-    var technical by rememberSaveable(selectedId) { mutableIntStateOf(existing?.technical ?: 4) }
-    var communication by rememberSaveable(selectedId) { mutableIntStateOf(existing?.communication ?: 3) }
-    var problemSolving by rememberSaveable(selectedId) { mutableIntStateOf(existing?.problemSolving ?: 4) }
-    var cultureFit by rememberSaveable(selectedId) { mutableIntStateOf(existing?.cultureFit ?: 4) }
-    var strengths by rememberSaveable(selectedId) { mutableStateOf(existing?.strengths ?: "Kiến thức chuyên môn tốt, tư duy logic rõ ràng.") }
-    var improvements by rememberSaveable(selectedId) { mutableStateOf(existing?.improvements ?: "Cần trình bày câu trả lời mạch lạc và cụ thể hơn.") }
-    var notes by rememberSaveable(selectedId) { mutableStateOf(existing?.notes ?: "Ứng viên tiềm năng, phù hợp với yêu cầu vị trí.") }
-    var conclusion by rememberSaveable(selectedId) { mutableStateOf(existing?.conclusion ?: "Hire") }
+    var technical by rememberSaveable(selectedId) { mutableIntStateOf(existing?.technical ?: 0) }
+    var communication by rememberSaveable(selectedId) { mutableIntStateOf(existing?.communication ?: 0) }
+    var problemSolving by rememberSaveable(selectedId) { mutableIntStateOf(existing?.problemSolving ?: 0) }
+    var cultureFit by rememberSaveable(selectedId) { mutableIntStateOf(existing?.cultureFit ?: 0) }
+    var strengths by rememberSaveable(selectedId) { mutableStateOf(existing?.strengths.orEmpty()) }
+    var improvements by rememberSaveable(selectedId) { mutableStateOf(existing?.improvements.orEmpty()) }
+    var notes by rememberSaveable(selectedId) { mutableStateOf(existing?.notes.orEmpty()) }
+    var conclusion by rememberSaveable(selectedId) { mutableStateOf(existing?.conclusion.orEmpty()) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val navigate = LocalHeaderNavigation.current
@@ -123,7 +135,7 @@ fun ScorecardScreen(
                     }
 
                     if (candidate == null) {
-                        EmptyState(Icons.Rounded.Badge, "Chưa có ứng viên", "Thêm ứng viên trước khi tạo scorecard.")
+                        EmptyState(Icons.Rounded.Badge, "Chưa có ứng viên cần đánh giá", "Hoàn thành một lịch phỏng vấn trước khi tạo scorecard.")
                     } else {
                         Box {
                             InfoCard(Modifier.fillMaxWidth().clickable { expanded = true }) {
@@ -139,7 +151,7 @@ fun ScorecardScreen(
                                 }
                             }
                             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                                candidates.forEach { item ->
+                                availableCandidates.forEach { item ->
                                     DropdownMenuItem(
                                         text = { Text(if (blindMode) "Ứng viên #${item.id.toString().padStart(3, '0')} · ${item.position}" else "${item.name} · ${item.position}") },
                                         onClick = { selectedId = item.id; expanded = false }
@@ -154,10 +166,11 @@ fun ScorecardScreen(
                             RatingRow("Communication", communication) { communication = it }
                             RatingRow("Problem solving", problemSolving) { problemSolving = it }
                             RatingRow("Culture fit", cultureFit) { cultureFit = it }
-                            val average = ScoreCalculator.average(technical, communication, problemSolving, cultureFit)
+                            val ratingsComplete = listOf(technical, communication, problemSolving, cultureFit).all { it in 1..5 }
+                            val average = if (ratingsComplete) ScoreCalculator.average(technical, communication, problemSolving, cultureFit) else null
                             Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text("Điểm trung bình", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-                                Text("${"%.2f".format(average)} / 5", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                                Text(average?.let { "${"%.2f".format(it)} / 5" } ?: "Chưa chấm đủ", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                             }
                         }
 
@@ -194,6 +207,8 @@ fun ScorecardScreen(
                                 ))
                                 scope.launch { snackbar.showSnackbar("Đã lưu phiếu đánh giá cho ${if (blindMode) "ứng viên #${candidate.id}" else candidate.name}") }
                             },
+                            enabled = listOf(technical, communication, problemSolving, cultureFit).all { it in 1..5 } &&
+                                conclusion.isNotBlank() && RecruitmentRules.canReview(candidate, interviews),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Rounded.Check, null)

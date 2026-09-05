@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         StageHistoryEntity::class,
         HrTaskEntity::class
     ],
-    version = 2,
+    version = 4,
     exportSchema = false
 )
 abstract class HireFlowDatabase : RoomDatabase() {
@@ -29,7 +29,7 @@ abstract class HireFlowDatabase : RoomDatabase() {
                 context.applicationContext,
                 HireFlowDatabase::class.java,
                 "hireflow.db"
-            ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
         }
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -56,6 +56,54 @@ abstract class HireFlowDatabase : RoomDatabase() {
                         "lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6)))"
                 )
                 if (withUpdatedAt) db.execSQL("UPDATE `$table` SET `updatedAt` = strftime('%s','now') * 1000")
+            }
+        }
+
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `hr_tasks` ADD COLUMN `assigneeId` TEXT")
+            }
+        }
+
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Repair the original offline fixture, which attached two interviews to
+                // candidates who were not yet in the interview stage.
+                db.execSQL(
+                    """
+                    UPDATE interviews
+                    SET candidateId = (SELECT id FROM candidates WHERE organizationId IS NULL AND name = 'Phạm Quang Huy' LIMIT 1),
+                        candidateName = 'Phạm Quang Huy',
+                        position = 'DevOps Engineer'
+                    WHERE organizationId IS NULL
+                      AND candidateName = 'Trần Minh Khôi'
+                      AND position = 'Backend Developer'
+                      AND EXISTS (SELECT 1 FROM candidates WHERE organizationId IS NULL AND name = 'Phạm Quang Huy')
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    UPDATE interviews
+                    SET candidateId = (SELECT id FROM candidates WHERE organizationId IS NULL AND name = 'Hoàng Gia Bảo' LIMIT 1),
+                        candidateName = 'Hoàng Gia Bảo',
+                        position = 'Frontend Developer'
+                    WHERE organizationId IS NULL
+                      AND candidateName = 'Lê Thu Hà'
+                      AND position = 'UI/UX Designer'
+                      AND EXISTS (SELECT 1 FROM candidates WHERE organizationId IS NULL AND name = 'Hoàng Gia Bảo')
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    UPDATE hr_tasks
+                    SET title = 'Chuẩn bị phỏng vấn: Phạm Quang Huy',
+                        subtitle = 'DevOps Engineer',
+                        type = 'interview'
+                    WHERE organizationId IS NULL
+                      AND title = 'Đánh giá: Trần Minh Khôi'
+                      AND subtitle = 'Backend Developer'
+                    """.trimIndent()
+                )
             }
         }
     }

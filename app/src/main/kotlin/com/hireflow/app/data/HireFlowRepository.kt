@@ -1,5 +1,6 @@
 package com.hireflow.app.data
 
+import com.hireflow.app.domain.RecruitmentRules
 import kotlinx.coroutines.flow.Flow
 import java.util.Calendar
 
@@ -7,6 +8,7 @@ class HireFlowRepository(private val dao: HireFlowDao) {
     val candidates = dao.observeCandidates()
     val interviews = dao.observeInterviews()
     val scorecards = dao.observeScorecards()
+    val histories = dao.observeAllHistory()
     val tasks = dao.observeTasks()
 
     fun candidate(id: Long): Flow<CandidateEntity?> = dao.observeCandidate(id)
@@ -14,56 +16,130 @@ class HireFlowRepository(private val dao: HireFlowDao) {
 
     suspend fun addCandidate(candidate: CandidateEntity): Long = dao.insertCandidate(candidate)
 
-    suspend fun updateCandidate(candidate: CandidateEntity) = dao.updateCandidate(
-        candidate.copy(updatedAt = System.currentTimeMillis(), syncState = SyncState.PENDING.name)
-    )
+    suspend fun updateCandidate(candidate: CandidateEntity) {
+        val updatedAt = System.currentTimeMillis()
+        dao.updateCandidate(candidate.copy(updatedAt = updatedAt, syncState = SyncState.PENDING.name))
+        dao.updateInterviewCandidateSnapshot(candidate.id, candidate.name, candidate.position, updatedAt)
+    }
 
     suspend fun attachCv(candidateId: Long, uri: String, remotePath: String? = null) =
         dao.updateCv(candidateId, uri, remotePath, System.currentTimeMillis())
 
-    suspend fun moveNext(candidate: CandidateEntity) {
-        val next = candidate.recruitmentStage.next()
-        if (next == candidate.recruitmentStage) return
-        dao.updateCandidate(candidate.copy(stage = next.name, updatedAt = System.currentTimeMillis(), syncState = SyncState.PENDING.name))
+    suspend fun moveNext(candidate: CandidateEntity, actorId: String? = null) {
+        val current = requireNotNull(dao.candidateById(candidate.id)) { "Không tìm thấy ứng viên." }
+        val interviews = dao.interviewsForCandidate(current.id)
+        val scorecards = dao.scorecardsForCandidate(current.id)
+        RecruitmentRules.advanceBlockReason(current, interviews, scorecards)?.let(::error)
+        val next = current.recruitmentStage.next()
+        dao.updateCandidate(current.copy(stage = next.name, updatedAt = System.currentTimeMillis(), syncState = SyncState.PENDING.name))
         dao.insertHistory(
             StageHistoryEntity(
-                candidateId = candidate.id,
-                fromStage = candidate.stage,
-                toStage = next.name
+                candidateId = current.id,
+                fromStage = current.stage,
+                toStage = next.name,
+                organizationId = current.organizationId,
+                actorId = actorId
             )
         )
     }
 
-    suspend fun reject(candidate: CandidateEntity) {
-        if (candidate.recruitmentStage == RecruitmentStage.REJECTED) return
-        dao.updateCandidate(candidate.copy(stage = RecruitmentStage.REJECTED.name, updatedAt = System.currentTimeMillis(), syncState = SyncState.PENDING.name))
+    suspend fun reject(candidate: CandidateEntity, actorId: String? = null) {
+        val current = requireNotNull(dao.candidateById(candidate.id)) { "Không tìm thấy ứng viên." }
+        require(current.recruitmentStage !in setOf(RecruitmentStage.HIRED, RecruitmentStage.REJECTED)) {
+            "Quy trình của ứng viên đã kết thúc."
+        }
+        dao.updateCandidate(current.copy(stage = RecruitmentStage.REJECTED.name, updatedAt = System.currentTimeMillis(), syncState = SyncState.PENDING.name))
         dao.insertHistory(
-            StageHistoryEntity(candidateId = candidate.id, fromStage = candidate.stage, toStage = RecruitmentStage.REJECTED.name)
+            StageHistoryEntity(
+                candidateId = current.id,
+                fromStage = current.stage,
+                toStage = RecruitmentStage.REJECTED.name,
+                organizationId = current.organizationId,
+                actorId = actorId
+            )
         )
     }
 
-    suspend fun addInterview(interview: InterviewEntity): Long = dao.insertInterview(interview.copy(syncState = SyncState.PENDING.name))
+    suspend fun addInterview(interview: InterviewEntity): Long {
+        val candidate = requireNotNull(dao.candidateById(interview.candidateId)) { "Không tìm thấy ứng viên." }
+        val sameScope = candidate.organizationId?.let { dao.interviewsForOrganization(it) } ?: dao.offlineInterviews()
+        RecruitmentRules.scheduleBlockReason(
+            candidate = candidate,
+            scheduledAt = interview.scheduledAt,
+            interviewer = interview.interviewer,
+            interviews = sameScope,
+            durationMinutes = interview.durationMinutes
+        )?.let(::error)
+        return dao.insertInterview(
+            interview.copy(
+                candidateName = candidate.name,
+                position = candidate.position,
+                organizationId = candidate.organizationId,
+                remoteCandidateId = candidate.remoteId,
+                updatedAt = System.currentTimeMillis(),
+                syncState = SyncState.PENDING.name
+            )
+        )
+    }
 
-    suspend fun saveScorecard(scorecard: ScorecardEntity) = dao.insertScorecard(scorecard.copy(syncState = SyncState.PENDING.name))
+    suspend fun setInterviewCompleted(interview: InterviewEntity, completed: Boolean) {
+        require(!completed || interview.scheduledAt <= System.currentTimeMillis()) {
+            "Không thể hoàn thành một lịch phỏng vấn chưa diễn ra."
+        }
+        dao.updateInterview(
+            interview.copy(
+                completed = completed,
+                updatedAt = System.currentTimeMillis(),
+                syncState = SyncState.PENDING.name
+            )
+        )
+    }
 
-    suspend fun toggleTask(task: HrTaskEntity) = dao.updateTask(task.copy(completed = !task.completed))
+    suspend fun saveScorecard(scorecard: ScorecardEntity, evaluatorId: String?) {
+        val candidate = requireNotNull(dao.candidateById(scorecard.candidateId)) { "Không tìm thấy ứng viên." }
+        RecruitmentRules.reviewBlockReason(candidate, dao.interviewsForCandidate(candidate.id))?.let(::error)
+        val existing = dao.scorecardForEvaluator(candidate.id, evaluatorId)
+        val saved = scorecard.copy(
+            id = existing?.id ?: 0,
+            remoteId = existing?.remoteId ?: scorecard.remoteId,
+            remoteCandidateId = candidate.remoteId,
+            organizationId = candidate.organizationId,
+            evaluatorId = evaluatorId,
+            createdAt = existing?.createdAt ?: scorecard.createdAt,
+            updatedAt = System.currentTimeMillis(),
+            syncState = SyncState.PENDING.name
+        )
+        dao.insertScorecard(saved)
+    }
 
-    internal suspend fun pendingCandidates() = dao.pendingCandidates()
-    internal suspend fun pendingInterviews() = dao.pendingInterviews()
-    internal suspend fun pendingScorecards() = dao.pendingScorecards()
+    suspend fun toggleTask(task: HrTaskEntity) = dao.updateTask(
+        task.copy(completed = !task.completed, updatedAt = System.currentTimeMillis(), syncState = SyncState.PENDING.name)
+    )
+
+    internal suspend fun pendingCandidates(organizationId: String) = dao.pendingCandidates(organizationId)
+    internal suspend fun pendingInterviews(organizationId: String) = dao.pendingInterviews(organizationId)
+    internal suspend fun pendingScorecards(organizationId: String) = dao.pendingScorecards(organizationId)
+    internal suspend fun pendingHistory(organizationId: String) = dao.pendingHistory(organizationId)
+    internal suspend fun pendingTasks(organizationId: String) = dao.pendingTasks(organizationId)
     internal suspend fun candidateByLocalId(id: Long) = dao.candidateById(id)
     internal suspend fun candidateByRemoteId(id: String) = dao.candidateByRemoteId(id)
     internal suspend fun interviewByRemoteId(id: String) = dao.interviewByRemoteId(id)
     internal suspend fun scorecardByRemoteId(id: String) = dao.scorecardByRemoteId(id)
+    internal suspend fun historyByRemoteId(id: String) = dao.historyByRemoteId(id)
+    internal suspend fun taskByRemoteId(id: String) = dao.taskByRemoteId(id)
     internal suspend fun upsertCandidate(candidate: CandidateEntity) = dao.insertCandidate(candidate)
     internal suspend fun upsertInterview(interview: InterviewEntity) = dao.insertInterview(interview)
     internal suspend fun upsertScorecard(scorecard: ScorecardEntity) = dao.insertScorecard(scorecard)
+    internal suspend fun upsertHistory(history: StageHistoryEntity) = dao.insertHistory(history)
+    internal suspend fun upsertTask(task: HrTaskEntity) = dao.insertTasks(listOf(task))
     internal suspend fun updateInterview(interview: InterviewEntity) = dao.updateInterview(interview)
     internal suspend fun updateScorecard(scorecard: ScorecardEntity) = dao.updateScorecard(scorecard)
+    internal suspend fun updateTask(task: HrTaskEntity) = dao.updateTask(task)
     internal suspend fun markCandidateSynced(id: String, orgId: String) = dao.markCandidateSynced(id, orgId)
+    internal suspend fun markHistorySynced(id: String, orgId: String, actorId: String) = dao.markHistorySynced(id, orgId, actorId)
 
     suspend fun seedDemoData() {
-        if (dao.candidateCount() == 0) {
+        if (dao.offlineCandidateCount() == 0) {
             val candidates = listOf(
                 CandidateEntity(name = "Nguyễn Văn An", position = "Android Developer", email = "nguyenvanan@email.com", phone = "0901 234 567", experienceYears = 3, skills = "Kotlin, Jetpack Compose, MVVM, Coroutines, Android SDK, Git", stage = RecruitmentStage.INTERVIEW.name, note = "Ứng viên có nền tảng tốt về Android, tư duy logic khá tốt. Cần đánh giá thêm về kiến thức hệ thống và clean architecture."),
                 CandidateEntity(name = "Trần Minh Khôi", position = "Backend Developer", email = "khoi.tran@email.com", phone = "0912 456 890", experienceYears = 4, skills = "Java, Spring Boot, PostgreSQL", stage = RecruitmentStage.SCREENING.name, note = "Kinh nghiệm sản phẩm fintech."),
@@ -81,14 +157,14 @@ class HireFlowRepository(private val dao: HireFlowDao) {
                 set(Calendar.HOUR_OF_DAY, 9); set(Calendar.MINUTE, 30); set(Calendar.SECOND, 0)
             }.timeInMillis
             dao.insertInterview(InterviewEntity(candidateId = ids[0], candidateName = "Nguyễn Văn An", position = "Android Developer", scheduledAt = today, format = "Online", interviewer = "Trần Hoàng Nam", round = "Vòng 2: Technical"))
-            dao.insertInterview(InterviewEntity(candidateId = ids[1], candidateName = "Trần Minh Khôi", position = "Backend Developer", scheduledAt = today + 90 * 60_000, format = "Onsite", interviewer = "Nguyễn Thị Linh", round = "Vòng 1: HR"))
-            dao.insertInterview(InterviewEntity(candidateId = ids[2], candidateName = "Lê Thu Hà", position = "UI/UX Designer", scheduledAt = today + 270 * 60_000, format = "Online", interviewer = "Trần Hoàng Nam", round = "Vòng 2: Technical"))
+            dao.insertInterview(InterviewEntity(candidateId = ids[3], candidateName = "Phạm Quang Huy", position = "DevOps Engineer", scheduledAt = today + 90 * 60_000, format = "Onsite", interviewer = "Nguyễn Thị Linh", round = "Vòng 1: HR"))
+            dao.insertInterview(InterviewEntity(candidateId = ids[5], candidateName = "Hoàng Gia Bảo", position = "Frontend Developer", scheduledAt = today + 270 * 60_000, format = "Online", interviewer = "Trần Hoàng Nam", round = "Vòng 2: Technical"))
         }
-        if (dao.taskCount() == 0) {
+        if (dao.offlineTaskCount() == 0) {
             dao.insertTasks(
                 listOf(
                     HrTaskEntity(title = "Phỏng vấn: Nguyễn Văn An", subtitle = "09:30 – 10:30 · Android Developer", type = "interview"),
-                    HrTaskEntity(title = "Đánh giá: Trần Minh Khôi", subtitle = "Backend Developer", type = "review"),
+                    HrTaskEntity(title = "Chuẩn bị phỏng vấn: Phạm Quang Huy", subtitle = "DevOps Engineer", type = "interview"),
                     HrTaskEntity(title = "Review CV: 5 ứng viên mới", subtitle = "Ưu tiên trong hôm nay", type = "cv"),
                     HrTaskEntity(title = "Gửi offer: 1 ứng viên", subtitle = "Đang chờ phản hồi", type = "offer")
                 )

@@ -1,15 +1,19 @@
 package com.hireflow.app
 
 import android.app.Application
-import android.net.Uri
+import androidx.core.content.FileProvider
+import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hireflow.app.data.CandidateEntity
 import com.hireflow.app.data.HrTaskEntity
 import com.hireflow.app.data.InterviewEntity
+import com.hireflow.app.data.LocalDataScope
 import com.hireflow.app.data.ScorecardEntity
 import com.hireflow.app.data.StageHistoryEntity
+import com.hireflow.app.domain.RecruitmentRules
 import com.hireflow.app.preferences.SettingsStore
+import com.hireflow.app.reminder.syncInterviewReminders
 import com.hireflow.app.cloud.UserProfileDto
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -22,6 +26,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onEach
+import java.io.File
 
 data class AccountUiState(
     val configured: Boolean = false,
@@ -42,10 +50,19 @@ data class HireFlowUiState(
     val candidates: List<CandidateEntity> = emptyList(),
     val interviews: List<InterviewEntity> = emptyList(),
     val scorecards: List<ScorecardEntity> = emptyList(),
+    val histories: List<StageHistoryEntity> = emptyList(),
     val tasks: List<HrTaskEntity> = emptyList(),
     val darkMode: Boolean = false,
     val notificationsEnabled: Boolean = true,
     val loading: Boolean = true
+)
+
+private data class LocalContent(
+    val candidates: List<CandidateEntity>,
+    val interviews: List<InterviewEntity>,
+    val scorecards: List<ScorecardEntity>,
+    val histories: List<StageHistoryEntity>,
+    val tasks: List<HrTaskEntity>
 )
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -58,20 +75,53 @@ class HireFlowViewModel(application: Application) : AndroidViewModel(application
     private val selectedCandidateId = MutableStateFlow<Long?>(null)
     private val _accountState = MutableStateFlow(AccountUiState(configured = backend.isConfigured))
     val accountState: StateFlow<AccountUiState> = _accountState
+    private val _notice = MutableStateFlow<String?>(null)
+    val notice: StateFlow<String?> = _notice
     private var realtimeJob: Job? = null
 
     private val appearance = combine(settings.darkMode, settings.notificationsEnabled) { darkMode, notifications ->
         darkMode to notifications
     }
 
-    val uiState: StateFlow<HireFlowUiState> = combine(
+    private val localContent = combine(
         repository.candidates,
         repository.interviews,
         repository.scorecards,
-        repository.tasks,
-        appearance
-    ) { candidates, interviews, scorecards, tasks, appearance ->
-        HireFlowUiState(candidates, interviews, scorecards, tasks, appearance.first, appearance.second, loading = false)
+        repository.histories,
+        repository.tasks
+    ) { candidates, interviews, scorecards, histories, tasks ->
+        LocalContent(candidates, interviews, scorecards, histories, tasks)
+    }
+
+    val uiState: StateFlow<HireFlowUiState> = combine(
+        localContent,
+        appearance,
+        accountState
+    ) { content, appearance, account ->
+        val organizationId = account.profile?.organizationId
+        fun inActiveScope(rowOrganizationId: String?): Boolean = LocalDataScope.matches(
+            rowOrganizationId = rowOrganizationId,
+            activeOrganizationId = organizationId,
+            authenticated = account.authenticated,
+            offlineMode = account.offlineMode
+        )
+        val candidates = content.candidates.filter { inActiveScope(it.organizationId) }
+        val candidateIds = candidates.mapTo(hashSetOf()) { it.id }
+        val candidatesById = candidates.associateBy { it.id }
+        HireFlowUiState(
+            candidates = candidates,
+            interviews = content.interviews.filter { interview ->
+                val candidate = candidatesById[interview.candidateId]
+                inActiveScope(interview.organizationId) && candidate != null &&
+                    RecruitmentRules.shouldShowInterview(candidate, interview)
+            },
+            scorecards = content.scorecards.filter { inActiveScope(it.organizationId) && it.candidateId in candidateIds },
+            histories = content.histories.filter { inActiveScope(it.organizationId) && it.candidateId in candidateIds },
+            tasks = content.tasks.filter { inActiveScope(it.organizationId) },
+            darkMode = appearance.first,
+            notificationsEnabled = appearance.second,
+            loading = false
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HireFlowUiState())
 
     val selectedCandidate: StateFlow<CandidateEntity?> = selectedCandidateId
@@ -106,10 +156,10 @@ class HireFlowViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun signUp(fullName: String, email: String, phone: String, password: String, role: String) {
+    fun signUp(fullName: String, email: String, phone: String, password: String) {
         viewModelScope.launch {
             _accountState.value = _accountState.value.copy(checking = true, message = null)
-            runCatching { backend.signUp(fullName.trim(), email.trim(), phone.trim(), password, role) }
+            runCatching { backend.signUp(fullName.trim(), email.trim(), phone.trim(), password) }
                 .onSuccess {
                     if (backend.currentUserId() != null) loadProfileAndSync()
                     else _accountState.value = _accountState.value.copy(
@@ -148,7 +198,14 @@ class HireFlowViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             realtimeJob?.cancel()
             runCatching { backend.signOut() }
-            _accountState.value = AccountUiState(configured = backend.isConfigured, checking = false)
+                .onSuccess {
+                    syncInterviewReminders(app, emptyList(), false)
+                    _accountState.value = AccountUiState(configured = backend.isConfigured, checking = false)
+                }
+                .onFailure {
+                    startRealtime()
+                    _notice.value = "Không thể đăng xuất. Hãy kiểm tra kết nối và thử lại."
+                }
         }
     }
 
@@ -157,8 +214,14 @@ class HireFlowViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             _accountState.value = _accountState.value.copy(syncing = true, message = null)
             runCatching { syncManager.syncAll(profile) }
-                .onSuccess { _accountState.value = _accountState.value.copy(syncing = false, message = "Đồng bộ hoàn tất") }
-                .onFailure { _accountState.value = _accountState.value.copy(syncing = false, message = "Đang offline, thay đổi sẽ tự đồng bộ sau") }
+                .onSuccess {
+                    _accountState.value = _accountState.value.copy(syncing = false)
+                    _notice.value = "Đồng bộ hoàn tất."
+                }
+                .onFailure {
+                    _accountState.value = _accountState.value.copy(syncing = false)
+                    _notice.value = "Đang offline, thay đổi sẽ tự đồng bộ sau."
+                }
         }
     }
 
@@ -179,9 +242,19 @@ class HireFlowViewModel(application: Application) : AndroidViewModel(application
     private fun startRealtime() {
         realtimeJob?.cancel()
         realtimeJob = viewModelScope.launch {
-            syncManager.realtimeCandidates()
-                .catch { _accountState.value = _accountState.value.copy(message = "Realtime tạm mất kết nối") }
-                .collectLatest { syncManager.mergeRealtime(it) }
+            merge(
+                syncManager.realtimeCandidates()
+                    .onEach { syncManager.mergeRealtime(it) }
+                    .map { Unit },
+                syncManager.realtimeInterviews()
+                    .onEach { syncManager.mergeRealtimeInterviews(it) }
+                    .map { Unit },
+                syncManager.realtimeScorecards()
+                    .onEach { syncManager.mergeRealtimeScorecards(it) }
+                    .map { Unit }
+            )
+                .catch { _notice.value = "Realtime tạm mất kết nối." }
+                .collectLatest { }
         }
     }
 
@@ -192,11 +265,21 @@ class HireFlowViewModel(application: Application) : AndroidViewModel(application
     fun selectCandidate(id: Long) { selectedCandidateId.value = id }
 
     fun addCandidate(candidate: CandidateEntity, onAdded: (Long) -> Unit = {}) {
-        viewModelScope.launch { onAdded(repository.addCandidate(candidate)); requestSync() }
+        viewModelScope.launch {
+            val organizationId = _accountState.value.profile?.organizationId
+            if (!_accountState.value.offlineMode && organizationId == null) return@launch
+            runCatching { repository.addCandidate(candidate.copy(organizationId = organizationId)) }
+                .onSuccess { onAdded(it); requestSync() }
+                .onFailure { _notice.value = it.message ?: "Không thể thêm ứng viên." }
+        }
     }
 
     fun updateCandidate(candidate: CandidateEntity) {
-        viewModelScope.launch { repository.updateCandidate(candidate); requestSync() }
+        viewModelScope.launch {
+            runCatching { repository.updateCandidate(candidate) }
+                .onSuccess { requestSync() }
+                .onFailure { _notice.value = it.message ?: "Không thể cập nhật ứng viên." }
+        }
     }
 
     fun attachCv(id: Long, uri: String) {
@@ -205,31 +288,81 @@ class HireFlowViewModel(application: Application) : AndroidViewModel(application
             val profile = _accountState.value.profile
             val candidate = repository.candidateByLocalId(id)
             if (profile != null && candidate != null) {
-                runCatching { syncManager.uploadCandidateCv(candidate, Uri.parse(uri), profile) }
+                runCatching { syncManager.uploadCandidateCv(candidate, uri.toUri(), profile) }
                     .onSuccess { requestSync() }
-                    .onFailure { _accountState.value = _accountState.value.copy(message = "CV đã lưu local và sẽ upload khi có mạng") }
+                    .onFailure { _notice.value = "CV đã lưu local và sẽ upload khi có mạng." }
             }
         }
     }
 
+    fun openCv(candidate: CandidateEntity, onReady: (String) -> Unit) {
+        candidate.cvUri?.let {
+            onReady(it)
+            return
+        }
+        val remotePath = candidate.remoteCvPath ?: run {
+            _notice.value = "Ứng viên chưa có CV."
+            return
+        }
+        viewModelScope.launch {
+            runCatching {
+                val directory = File(app.cacheDir, "candidate_cvs").apply { mkdirs() }
+                val file = File(directory, "${candidate.remoteId}.pdf")
+                file.writeBytes(backend.downloadCv(remotePath))
+                FileProvider.getUriForFile(app, "${app.packageName}.files", file).toString()
+            }.onSuccess(onReady)
+                .onFailure { _notice.value = "Không thể tải CV từ cloud. Hãy kiểm tra kết nối." }
+        }
+    }
+
     fun moveNext(candidate: CandidateEntity) {
-        viewModelScope.launch { repository.moveNext(candidate); requestSync() }
+        viewModelScope.launch {
+            runCatching { repository.moveNext(candidate, _accountState.value.profile?.id) }
+                .onSuccess { requestSync() }
+                .onFailure { _notice.value = it.message ?: "Không thể chuyển vòng ứng viên." }
+        }
     }
 
     fun reject(candidate: CandidateEntity) {
-        viewModelScope.launch { repository.reject(candidate); requestSync() }
+        viewModelScope.launch {
+            runCatching { repository.reject(candidate, _accountState.value.profile?.id) }
+                .onSuccess { requestSync() }
+                .onFailure { _notice.value = it.message ?: "Không thể từ chối ứng viên." }
+        }
     }
 
     fun addInterview(interview: InterviewEntity, onAdded: (Long) -> Unit) {
-        viewModelScope.launch { onAdded(repository.addInterview(interview)); requestSync() }
+        viewModelScope.launch {
+            runCatching {
+                repository.addInterview(interview.copy(interviewerUserId = _accountState.value.profile?.id))
+            }
+                .onSuccess { onAdded(it); requestSync() }
+                .onFailure { _notice.value = it.message ?: "Không thể tạo lịch phỏng vấn." }
+        }
     }
 
     fun saveScorecard(scorecard: ScorecardEntity) {
-        viewModelScope.launch { repository.saveScorecard(scorecard); requestSync() }
+        viewModelScope.launch {
+            val evaluatorId = _accountState.value.profile?.id
+            runCatching { repository.saveScorecard(scorecard, evaluatorId) }
+                .onSuccess { requestSync() }
+                .onFailure { _notice.value = it.message ?: "Không thể lưu phiếu đánh giá." }
+        }
+    }
+
+    fun setInterviewCompleted(interview: InterviewEntity, completed: Boolean) {
+        viewModelScope.launch {
+            runCatching { repository.setInterviewCompleted(interview, completed) }
+                .onSuccess { requestSync() }
+                .onFailure { _notice.value = it.message ?: "Không thể cập nhật lịch phỏng vấn." }
+        }
     }
 
     fun toggleTask(task: HrTaskEntity) {
-        viewModelScope.launch { repository.toggleTask(task) }
+        viewModelScope.launch {
+            repository.toggleTask(task)
+            requestSync()
+        }
     }
 
     fun setDarkMode(enabled: Boolean) {
@@ -238,6 +371,10 @@ class HireFlowViewModel(application: Application) : AndroidViewModel(application
 
     fun setNotificationsEnabled(enabled: Boolean) {
         viewModelScope.launch { settings.setNotificationsEnabled(enabled) }
+    }
+
+    fun clearNotice() {
+        _notice.value = null
     }
 
     fun updateProfile(fullName: String, phone: String, department: String, jobTitle: String) {
@@ -251,10 +388,14 @@ class HireFlowViewModel(application: Application) : AndroidViewModel(application
                 _accountState.value = _accountState.value.copy(
                     checking = false,
                     profile = profile,
-                    message = "Đã cập nhật hồ sơ.",
+                    message = null,
                     messageIsError = false
                 )
-            }.onFailure { showAuthError(it, "Không thể cập nhật hồ sơ.") }
+                _notice.value = "Đã cập nhật hồ sơ."
+            }.onFailure {
+                _accountState.value = _accountState.value.copy(checking = false)
+                _notice.value = "Không thể cập nhật hồ sơ."
+            }
         }
     }
 }

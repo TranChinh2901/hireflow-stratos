@@ -2,10 +2,13 @@ package com.hireflow.app.cloud
 
 import android.content.Context
 import android.net.Uri
+import androidx.core.net.toUri
 import com.hireflow.app.data.CandidateEntity
 import com.hireflow.app.data.HireFlowRepository
+import com.hireflow.app.data.HrTaskEntity
 import com.hireflow.app.data.InterviewEntity
 import com.hireflow.app.data.ScorecardEntity
+import com.hireflow.app.data.StageHistoryEntity
 import com.hireflow.app.data.SyncState
 import kotlinx.coroutines.flow.Flow
 import java.time.Instant
@@ -22,9 +25,19 @@ class CloudSyncManager(
     }
 
     fun realtimeCandidates(): Flow<List<CandidateDto>> = backend.realtimeCandidates()
+    fun realtimeInterviews(): Flow<List<InterviewDto>> = backend.realtimeInterviews()
+    fun realtimeScorecards(): Flow<List<ScorecardDto>> = backend.realtimeScorecards()
 
     suspend fun mergeRealtime(candidates: List<CandidateDto>) {
         candidates.forEach { mergeCandidate(it) }
+    }
+
+    suspend fun mergeRealtimeInterviews(interviews: List<InterviewDto>) {
+        interviews.forEach { mergeInterview(it) }
+    }
+
+    suspend fun mergeRealtimeScorecards(scorecards: List<ScorecardDto>) {
+        scorecards.forEach { mergeScorecard(it) }
     }
 
     suspend fun uploadCandidateCv(candidate: CandidateEntity, uri: Uri, profile: UserProfileDto): String {
@@ -37,35 +50,49 @@ class CloudSyncManager(
     }
 
     private suspend fun pushPending(profile: UserProfileDto) {
-        repository.pendingCandidates().forEach { local ->
-            backend.upsertCandidate(local.toDto(profile.organizationId))
+        repository.pendingCandidates(profile.organizationId).forEach { local ->
+            val ready = if (local.cvUri != null && local.remoteCvPath == null) {
+                val remotePath = uploadCandidateCv(local, local.cvUri.toUri(), profile)
+                local.copy(remoteCvPath = remotePath)
+            } else local
+            backend.upsertCandidate(ready.toDto(profile.organizationId))
             repository.markCandidateSynced(local.remoteId, profile.organizationId)
         }
-        repository.pendingInterviews().forEach { local ->
+        repository.pendingInterviews(profile.organizationId).forEach { local ->
             val candidate = repository.candidateByLocalId(local.candidateId) ?: return@forEach
             backend.upsertInterview(local.toDto(profile.organizationId, candidate.remoteId))
             repository.updateInterview(local.copy(organizationId = profile.organizationId, remoteCandidateId = candidate.remoteId, syncState = SyncState.SYNCED.name))
         }
-        repository.pendingScorecards().forEach { local ->
+        repository.pendingScorecards(profile.organizationId).forEach { local ->
             val candidate = repository.candidateByLocalId(local.candidateId) ?: return@forEach
             backend.upsertScorecard(local.toDto(profile.organizationId, candidate.remoteId, profile.id))
             repository.updateScorecard(local.copy(organizationId = profile.organizationId, remoteCandidateId = candidate.remoteId, evaluatorId = profile.id, syncState = SyncState.SYNCED.name))
+        }
+        repository.pendingHistory(profile.organizationId).forEach { local ->
+            val candidate = repository.candidateByLocalId(local.candidateId) ?: return@forEach
+            val actorId = local.actorId ?: profile.id
+            backend.upsertHistory(local.toDto(profile.organizationId, candidate.remoteId, actorId))
+            repository.markHistorySynced(local.remoteId, profile.organizationId, actorId)
+        }
+        repository.pendingTasks(profile.organizationId).forEach { local ->
+            backend.upsertTask(local.toDto(profile.organizationId))
+            repository.updateTask(local.copy(syncState = SyncState.SYNCED.name))
         }
     }
 
     private suspend fun pullLatest() {
         backend.fetchCandidates().forEach { mergeCandidate(it) }
-        backend.fetchInterviews().forEach { remote ->
+        backend.fetchInterviews().forEach { mergeInterview(it) }
+        backend.fetchScorecards().forEach { mergeScorecard(it) }
+        backend.fetchHistory().forEach { remote ->
+            if (repository.historyByRemoteId(remote.id) != null) return@forEach
             val candidate = repository.candidateByRemoteId(remote.candidateId) ?: return@forEach
-            val local = repository.interviewByRemoteId(remote.id)
-            if (local != null && SyncConflictResolver.keepLocal(local.syncState, local.updatedAt, remote.updatedAt.toEpoch())) return@forEach
-            repository.upsertInterview(remote.toEntity(local?.id ?: 0, candidate.id, candidate.name, candidate.position))
+            repository.upsertHistory(remote.toEntity(candidate.id))
         }
-        backend.fetchScorecards().forEach { remote ->
-            val candidate = repository.candidateByRemoteId(remote.candidateId) ?: return@forEach
-            val local = repository.scorecardByRemoteId(remote.id)
+        backend.fetchTasks().forEach { remote ->
+            val local = repository.taskByRemoteId(remote.id)
             if (local != null && SyncConflictResolver.keepLocal(local.syncState, local.updatedAt, remote.updatedAt.toEpoch())) return@forEach
-            repository.upsertScorecard(remote.toEntity(local?.id ?: 0, candidate.id))
+            repository.upsertTask(remote.toEntity(local?.id ?: 0))
         }
     }
 
@@ -73,6 +100,20 @@ class CloudSyncManager(
         val local = repository.candidateByRemoteId(remote.id)
         if (local != null && SyncConflictResolver.keepLocal(local.syncState, local.updatedAt, remote.updatedAt.toEpoch())) return
         repository.upsertCandidate(remote.toEntity(local?.id ?: 0, local?.cvUri))
+    }
+
+    private suspend fun mergeInterview(remote: InterviewDto) {
+        val candidate = repository.candidateByRemoteId(remote.candidateId) ?: return
+        val local = repository.interviewByRemoteId(remote.id)
+        if (local != null && SyncConflictResolver.keepLocal(local.syncState, local.updatedAt, remote.updatedAt.toEpoch())) return
+        repository.upsertInterview(remote.toEntity(local?.id ?: 0, candidate.id, candidate.name, candidate.position))
+    }
+
+    private suspend fun mergeScorecard(remote: ScorecardDto) {
+        val candidate = repository.candidateByRemoteId(remote.candidateId) ?: return
+        val local = repository.scorecardByRemoteId(remote.id)
+        if (local != null && SyncConflictResolver.keepLocal(local.syncState, local.updatedAt, remote.updatedAt.toEpoch())) return
+        repository.upsertScorecard(remote.toEntity(local?.id ?: 0, candidate.id))
     }
 }
 
@@ -120,6 +161,53 @@ private fun ScorecardDto.toEntity(localId: Long, localCandidateId: Long) = Score
     improvements = improvements, notes = notes, conclusion = conclusion,
     remoteId = id, remoteCandidateId = candidateId, organizationId = organizationId,
     evaluatorId = evaluatorId, updatedAt = updatedAt.toEpoch(), syncState = SyncState.SYNCED.name
+)
+
+private fun StageHistoryEntity.toDto(orgId: String, candidateRemoteId: String, userId: String) = StageHistoryDto(
+    id = remoteId,
+    organizationId = orgId,
+    candidateId = candidateRemoteId,
+    fromStage = fromStage.lowercase(),
+    toStage = toStage.lowercase(),
+    actorId = userId,
+    changedAt = Instant.ofEpochMilli(changedAt).toString()
+)
+
+private fun StageHistoryDto.toEntity(localCandidateId: Long) = StageHistoryEntity(
+    candidateId = localCandidateId,
+    fromStage = fromStage.uppercase(),
+    toStage = toStage.uppercase(),
+    changedAt = changedAt.toEpoch(),
+    remoteId = id,
+    organizationId = organizationId,
+    actorId = actorId,
+    syncState = SyncState.SYNCED.name
+)
+
+private fun HrTaskEntity.toDto(orgId: String) = HrTaskDto(
+    id = remoteId,
+    organizationId = orgId,
+    title = title,
+    subtitle = subtitle,
+    type = type,
+    completed = completed,
+    dueAt = Instant.ofEpochMilli(dueAt).toString(),
+    assigneeId = assigneeId,
+    updatedAt = Instant.ofEpochMilli(updatedAt).toString()
+)
+
+private fun HrTaskDto.toEntity(localId: Long) = HrTaskEntity(
+    id = localId,
+    title = title,
+    subtitle = subtitle,
+    type = type,
+    completed = completed,
+    dueAt = dueAt.toEpoch(),
+    remoteId = id,
+    organizationId = organizationId,
+    assigneeId = assigneeId,
+    updatedAt = updatedAt.toEpoch(),
+    syncState = SyncState.SYNCED.name
 )
 
 private fun String.toEpoch(): Long = runCatching { Instant.parse(this).toEpochMilli() }.getOrDefault(0L)

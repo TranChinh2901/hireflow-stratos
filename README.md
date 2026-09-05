@@ -1,6 +1,6 @@
 # HireFlow
 
-HireFlow là ứng dụng Mini ATS offline-first trên Android, giúp HR quản lý ứng viên từ lúc nhận CV đến phỏng vấn, đánh giá và đưa ra kết quả tuyển dụng. Room hỗ trợ làm việc khi mất mạng, còn Supabase đồng bộ dữ liệu cho đội ngũ khi có kết nối.
+HireFlow là ứng dụng Mini ATS offline-first trên Android, giúp HR quản lý ứng viên từ lúc nhận CV đến phỏng vấn, đánh giá và đưa ra kết quả tuyển dụng. Room hỗ trợ làm việc khi mất mạng, còn Supabase đồng bộ workspace riêng của tài khoản khi có kết nối.
 
 ## Tính năng đã triển khai
 
@@ -9,18 +9,18 @@ HireFlow là ứng dụng Mini ATS offline-first trên Android, giúp HR quản 
 - Lưu email, số điện thoại, kinh nghiệm, kỹ năng, trạng thái và ghi chú nội bộ.
 - Chọn và mở CV PDF bằng Android Storage Access Framework.
 - Candidate Pipeline gồm `Applied → Screening → Interview → Waiting Decision → Offer → Hired`, có nhánh `Rejected`.
-- Chuyển ứng viên sang vòng kế tiếp và lưu lịch sử thay đổi trong Room.
-- Tạo lịch phỏng vấn, chọn Online/Onsite, interviewer, vòng phỏng vấn và checklist câu hỏi.
-- Gửi local notification trước lịch phỏng vấn 15 phút bằng AlarmManager.
+- Chuyển vòng có kiểm tra CV, lịch đã hoàn thành, scorecard và kết luận; lịch sử được lưu local và đồng bộ cloud.
+- Chỉ tạo lịch tương lai cho ứng viên ở vòng Interview, chặn lịch trùng interviewer và cho phép đánh dấu hoàn thành.
+- Gửi local notification trước lịch phỏng vấn 15 phút bằng AlarmManager và lên lịch lại khi mở app.
 - Interview Scorecard với 4 tiêu chí, điểm trung bình, nhận xét và kết luận.
 - Blind Review Mode ẩn tên và avatar, chỉ giữ lại dữ liệu liên quan đến năng lực.
 - Dark mode được lưu bằng DataStore.
-- Đăng nhập/đăng ký bằng Supabase Auth và mô hình workspace nhiều người dùng.
+- Đăng nhập/đăng ký bằng Supabase Auth; mỗi tài khoản MVP có một workspace riêng biệt.
 - Trang hồ sơ HR với thống kê hoạt động, thông tin công việc, cài đặt và chỉnh sửa hồ sơ.
 - Đồng bộ offline-first: Room ghi trước, WorkManager đẩy lên PostgreSQL khi có mạng.
-- Pipeline nhận cập nhật Realtime giữa Admin, HR và Interviewer.
-- CV được upload vào Supabase Storage private bucket có RLS.
-- Dữ liệu demo được seed tự động ở lần chạy đầu tiên.
+- Candidate, interview và scorecard nhận cập nhật Realtime trong workspace đang đăng nhập.
+- CV được upload vào Supabase Storage private bucket có RLS, tự retry và có thể tải trên thiết bị khác.
+- Dữ liệu demo được seed trong vùng offline riêng và không được upload vào tài khoản cloud.
 - Unit test cho logic tính điểm scorecard.
 
 ## Kiến trúc và công nghệ
@@ -75,7 +75,7 @@ app/build/outputs/apk/debug/app-debug.apk
 3. Mở hồ sơ và đính kèm CV PDF từ thiết bị.
 4. Nhấn chuyển vòng hoặc thao tác trực tiếp trong Pipeline.
 5. Tạo lịch phỏng vấn và nhập checklist câu hỏi.
-6. Mở phiếu đánh giá, bật Blind Review Mode và thay đổi điểm.
+6. Đánh dấu lịch đã hoàn thành, mở phiếu đánh giá, bật Blind Review Mode và chấm đủ bốn tiêu chí.
 7. Lưu kết luận, quay lại hồ sơ rồi chuyển ứng viên sang vòng tiếp theo.
 8. Chạm avatar trên Dashboard để mở Hồ sơ, đổi giao diện hoặc cập nhật thông tin cá nhân.
 

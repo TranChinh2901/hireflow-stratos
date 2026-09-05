@@ -12,19 +12,21 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.edit
 import com.hireflow.app.MainActivity
+import com.hireflow.app.data.InterviewEntity
 
 const val INTERVIEW_CHANNEL = "interview_reminders"
+private const val REMINDER_PREFS = "interview_reminder_ids"
+private const val REMINDER_IDS = "scheduled_ids"
 
 fun createInterviewChannel(context: Context) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        val channel = NotificationChannel(
-            INTERVIEW_CHANNEL,
-            "Nhắc lịch phỏng vấn",
-            NotificationManager.IMPORTANCE_HIGH
-        ).apply { description = "Thông báo trước các cuộc phỏng vấn đã lên lịch" }
-        context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
-    }
+    val channel = NotificationChannel(
+        INTERVIEW_CHANNEL,
+        "Nhắc lịch phỏng vấn",
+        NotificationManager.IMPORTANCE_HIGH
+    ).apply { description = "Thông báo trước các cuộc phỏng vấn đã lên lịch" }
+    context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
 }
 
 fun scheduleInterviewReminder(
@@ -48,6 +50,40 @@ fun scheduleInterviewReminder(
     )
     val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
     alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+    val preferences = context.getSharedPreferences(REMINDER_PREFS, Context.MODE_PRIVATE)
+    preferences.edit {
+        putStringSet(REMINDER_IDS, preferences.getStringSet(REMINDER_IDS, emptySet()).orEmpty() + interviewId.toString())
+    }
+}
+
+fun syncInterviewReminders(context: Context, interviews: List<InterviewEntity>, enabled: Boolean) {
+    val preferences = context.getSharedPreferences(REMINDER_PREFS, Context.MODE_PRIVATE)
+    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    preferences.getStringSet(REMINDER_IDS, emptySet()).orEmpty().forEach { storedId ->
+        val id = storedId.toLongOrNull() ?: return@forEach
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            id.toInt(),
+            Intent(context, InterviewReminderReceiver::class.java),
+            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+        )
+        if (pendingIntent != null) {
+            alarmManager.cancel(pendingIntent)
+            pendingIntent.cancel()
+        }
+    }
+    preferences.edit { putStringSet(REMINDER_IDS, emptySet()) }
+    if (!enabled) return
+    val now = System.currentTimeMillis()
+    interviews.filter { !it.completed && it.scheduledAt > now }.forEach { interview ->
+        scheduleInterviewReminder(
+            context,
+            interview.id,
+            interview.candidateName,
+            interview.position,
+            interview.scheduledAt
+        )
+    }
 }
 
 class InterviewReminderReceiver : BroadcastReceiver() {
@@ -77,5 +113,10 @@ class InterviewReminderReceiver : BroadcastReceiver() {
             intent.getIntExtra("notification_id", candidate.hashCode()),
             notification
         )
+        val firedId = intent.getIntExtra("notification_id", -1).toString()
+        val preferences = context.getSharedPreferences(REMINDER_PREFS, Context.MODE_PRIVATE)
+        preferences.edit {
+            putStringSet(REMINDER_IDS, preferences.getStringSet(REMINDER_IDS, emptySet()).orEmpty() - firedId)
+        }
     }
 }

@@ -237,8 +237,8 @@ private fun AddCandidateDialog(onDismiss: () -> Unit, onSave: (CandidateEntity) 
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     FormSectionTitle("Thông tin cơ bản")
-                    CompactField(name, { name = it }, "Họ và tên *", Icons.Rounded.Person)
-                    CompactField(position, { position = it }, "Vị trí ứng tuyển *", Icons.Rounded.Badge)
+                    CompactField(name, { name = it }, "Họ và tên *", Icons.Rounded.Person, Modifier.fillMaxWidth())
+                    CompactField(position, { position = it }, "Vị trí ứng tuyển *", Icons.Rounded.Badge, Modifier.fillMaxWidth())
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         CompactField(email, { email = it }, "Email", Icons.Rounded.Email, Modifier.weight(1f), KeyboardType.Email)
                         CompactField(phone, { phone = it }, "Điện thoại", Icons.Rounded.Phone, Modifier.weight(1f), KeyboardType.Phone)
@@ -326,7 +326,7 @@ private fun CompactField(
     onValueChange: (String) -> Unit,
     label: String,
     icon: ImageVector,
-    modifier: Modifier = Modifier.fillMaxWidth(),
+    modifier: Modifier = Modifier,
     keyboardType: KeyboardType = KeyboardType.Text
 ) {
     val interactionSource = remember { MutableInteractionSource() }

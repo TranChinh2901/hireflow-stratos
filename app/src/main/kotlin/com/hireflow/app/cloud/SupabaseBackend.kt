@@ -42,14 +42,14 @@ class SupabaseBackend {
         }
     }
 
-    suspend fun signUp(fullName: String, email: String, phone: String, password: String, role: String) {
+    suspend fun signUp(fullName: String, email: String, phone: String, password: String) {
         requireNotNull(client) { "Supabase chưa được cấu hình" }.auth.signUpWith(Email) {
             this.email = email
             this.password = password
             data = buildJsonObject {
                 put("full_name", fullName)
                 put("phone", phone)
-                put("requested_role", if (role == "hr") "hr" else "admin")
+                put("requested_role", "admin")
             }
         }
     }
@@ -85,6 +85,14 @@ class SupabaseBackend {
     fun realtimeCandidates(): Flow<List<CandidateDto>> =
         requireNotNull(client).from("candidates").selectAsFlow(CandidateDto::id)
 
+    @OptIn(SupabaseExperimental::class)
+    fun realtimeInterviews(): Flow<List<InterviewDto>> =
+        requireNotNull(client).from("interviews").selectAsFlow(InterviewDto::id)
+
+    @OptIn(SupabaseExperimental::class)
+    fun realtimeScorecards(): Flow<List<ScorecardDto>> =
+        requireNotNull(client).from("scorecards").selectAsFlow(ScorecardDto::id)
+
     suspend fun upsertInterview(interview: InterviewDto) {
         requireNotNull(client).from("interviews").upsert(interview)
     }
@@ -99,7 +107,24 @@ class SupabaseBackend {
     suspend fun fetchScorecards(): List<ScorecardDto> =
         requireNotNull(client).from("scorecards").select().decodeList()
 
+    suspend fun upsertHistory(history: StageHistoryDto) {
+        requireNotNull(client).from("stage_history").upsert(history)
+    }
+
+    suspend fun fetchHistory(): List<StageHistoryDto> =
+        requireNotNull(client).from("stage_history").select().decodeList()
+
+    suspend fun upsertTask(task: HrTaskDto) {
+        requireNotNull(client).from("hr_tasks").upsert(task)
+    }
+
+    suspend fun fetchTasks(): List<HrTaskDto> =
+        requireNotNull(client).from("hr_tasks").select().decodeList()
+
     suspend fun uploadCv(path: String, bytes: ByteArray) {
         requireNotNull(client).storage.from("candidate-cvs").upload(path, bytes) { upsert = true }
     }
+
+    suspend fun downloadCv(path: String): ByteArray =
+        requireNotNull(client).storage.from("candidate-cvs").downloadAuthenticated(path)
 }

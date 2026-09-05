@@ -71,3 +71,27 @@ data class ScorecardDto(
     val conclusion: String,
     @SerialName("updated_at") val updatedAt: String
 )
+
+@Serializable
+data class StageHistoryDto(
+    val id: String,
+    @SerialName("organization_id") val organizationId: String,
+    @SerialName("candidate_id") val candidateId: String,
+    @SerialName("from_stage") val fromStage: String,
+    @SerialName("to_stage") val toStage: String,
+    @SerialName("actor_id") val actorId: String,
+    @SerialName("changed_at") val changedAt: String
+)
+
+@Serializable
+data class HrTaskDto(
+    val id: String,
+    @SerialName("organization_id") val organizationId: String,
+    val title: String,
+    val subtitle: String,
+    val type: String,
+    val completed: Boolean,
+    @SerialName("due_at") val dueAt: String,
+    @SerialName("assignee_id") val assigneeId: String? = null,
+    @SerialName("updated_at") val updatedAt: String
+)

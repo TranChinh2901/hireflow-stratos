@@ -59,11 +59,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.net.toUri
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hireflow.app.data.CandidateEntity
+import com.hireflow.app.data.InterviewEntity
 import com.hireflow.app.data.RecruitmentStage
 import com.hireflow.app.data.ScorecardEntity
+import com.hireflow.app.data.StageHistoryEntity
+import com.hireflow.app.domain.RecruitmentRules
 import com.hireflow.app.ui.components.EmptyState
 import com.hireflow.app.ui.components.InfoCard
 import com.hireflow.app.ui.components.InitialAvatar
@@ -71,14 +75,20 @@ import com.hireflow.app.ui.components.ScreenHeader
 import com.hireflow.app.ui.components.SectionTitle
 import com.hireflow.app.ui.components.StagePill
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
 fun CandidateDetailScreen(
     candidate: CandidateEntity?,
     scorecard: ScorecardEntity?,
+    interviews: List<InterviewEntity>,
+    histories: List<StageHistoryEntity>,
     onBack: () -> Unit,
     onAttachCv: (Long, String) -> Unit,
+    onOpenCv: (CandidateEntity, (String) -> Unit) -> Unit,
     onUpdate: (CandidateEntity) -> Unit,
     canManage: Boolean,
     onMoveNext: (CandidateEntity) -> Unit,
@@ -96,6 +106,8 @@ fun CandidateDetailScreen(
     var showEdit by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val advanceBlockReason = RecruitmentRules.advanceBlockReason(candidate, interviews, listOfNotNull(scorecard))
+    val reviewBlockReason = RecruitmentRules.reviewBlockReason(candidate, interviews)
     val pdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
@@ -107,7 +119,7 @@ fun CandidateDetailScreen(
         ScreenHeader("", onBack = onBack, action = {
             if (canManage) HeaderAction(Icons.Rounded.Edit, "Sửa hồ sơ") { showEdit = true }
             HeaderOverflow(buildList {
-                add("Đánh giá ứng viên" to { onReview(candidate.id) })
+                if (scorecard != null || reviewBlockReason == null) add("Đánh giá ứng viên" to { onReview(candidate.id) })
                 if (canManage) add("Đính kèm CV" to { pdfLauncher.launch(arrayOf("application/pdf")) })
             })
         })
@@ -170,20 +182,26 @@ fun CandidateDetailScreen(
                                 }
                                 Spacer(Modifier.size(10.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text(if (candidate.cvUri == null) "Chưa có CV" else "${candidate.name.replace(" ", "_")}_CV.pdf", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(if (candidate.cvUri == null) "Chọn file PDF từ điện thoại" else "Đã lưu quyền truy cập", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    val hasCv = candidate.cvUri != null || candidate.remoteCvPath != null
+                                    Text(if (!hasCv) "Chưa có CV" else "${candidate.name.replace(" ", "_")}_CV.pdf", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(if (!hasCv) "Chọn file PDF từ điện thoại" else if (candidate.cvUri != null) "Đã lưu trên thiết bị" else "Đã lưu trên cloud", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                if (candidate.cvUri != null) {
+                                if (candidate.cvUri != null || candidate.remoteCvPath != null) {
                                     Icon(
                                         Icons.Rounded.Download,
                                         "Mở CV",
                                         tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(38.dp).clip(CircleShape).clickable {
-                                            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(candidate.cvUri)).apply {
-                                                setDataAndType(android.net.Uri.parse(candidate.cvUri), "application/pdf")
-                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            onOpenCv(candidate) { uri ->
+                                                val parsed = uri.toUri()
+                                                val intent = Intent(Intent.ACTION_VIEW, parsed).apply {
+                                                    setDataAndType(parsed, "application/pdf")
+                                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                }
+                                                try { context.startActivity(intent) } catch (_: ActivityNotFoundException) {
+                                                    scope.launch { snackbar.showSnackbar("Thiết bị chưa có ứng dụng đọc PDF") }
+                                                }
                                             }
-                                            try { context.startActivity(intent) } catch (_: ActivityNotFoundException) { scope.launch { snackbar.showSnackbar("Thiết bị chưa có ứng dụng đọc PDF") } }
                                         }.padding(8.dp)
                                     )
                                 }
@@ -192,7 +210,7 @@ fun CandidateDetailScreen(
                         if (canManage) OutlinedButton(shape = RoundedCornerShape(9.dp), onClick = { pdfLauncher.launch(arrayOf("application/pdf")) }, modifier = Modifier.fillMaxWidth()) {
                             Icon(Icons.Rounded.AttachFile, null)
                             Spacer(Modifier.size(7.dp))
-                            Text(if (candidate.cvUri == null) "Đính kèm CV PDF" else "Thay CV")
+                            Text(if (candidate.cvUri == null && candidate.remoteCvPath == null) "Đính kèm CV PDF" else "Thay CV")
                         }
                     }
 
@@ -209,15 +227,44 @@ fun CandidateDetailScreen(
                         }
                     }
 
-                    FilledTonalButton(shape = RoundedCornerShape(9.dp), onClick = { onReview(candidate.id) }, modifier = Modifier.fillMaxWidth()) {
+                    if (histories.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SectionTitle("Lịch sử chuyển vòng")
+                            histories.take(5).forEach { history ->
+                                val from = runCatching { RecruitmentStage.valueOf(history.fromStage).label }.getOrDefault(history.fromStage)
+                                val to = runCatching { RecruitmentStage.valueOf(history.toStage).label }.getOrDefault(history.toStage)
+                                InfoCard(Modifier.fillMaxWidth()) {
+                                    Text("$from → $to", style = MaterialTheme.typography.titleMedium)
+                                    Text(
+                                        SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.forLanguageTag("vi-VN")).format(Date(history.changedAt)),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    FilledTonalButton(
+                        shape = RoundedCornerShape(9.dp),
+                        onClick = { onReview(candidate.id) },
+                        enabled = scorecard != null || reviewBlockReason == null,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Icon(Icons.Rounded.RateReview, null)
                         Spacer(Modifier.size(7.dp))
                         Text(if (scorecard == null) "Mở Blind Review & chấm điểm" else "Xem lại đánh giá")
                     }
+                    if (scorecard == null && reviewBlockReason != null) {
+                        Text(reviewBlockReason, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+                    }
                     if (canManage && candidate.recruitmentStage != RecruitmentStage.HIRED && candidate.recruitmentStage != RecruitmentStage.REJECTED) {
-                        Button(shape = RoundedCornerShape(9.dp), onClick = { onMoveNext(candidate) }, modifier = Modifier.fillMaxWidth()) {
+                        Button(shape = RoundedCornerShape(9.dp), onClick = { onMoveNext(candidate) }, enabled = advanceBlockReason == null, modifier = Modifier.fillMaxWidth()) {
                             Text("Chuyển sang ${candidate.recruitmentStage.next().label}", modifier = Modifier.weight(1f))
                             Icon(Icons.AutoMirrored.Rounded.ArrowForward, null)
+                        }
+                        if (advanceBlockReason != null) {
+                            Text(advanceBlockReason, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
                         }
                         OutlinedButton(shape = RoundedCornerShape(9.dp), onClick = { onReject(candidate) }, modifier = Modifier.fillMaxWidth()) { Text("Từ chối ứng viên", color = MaterialTheme.colorScheme.error) }
                     }
@@ -274,7 +321,7 @@ private fun EditCandidateDialog(candidate: CandidateEntity, onDismiss: () -> Uni
         },
         confirmButton = {
             Button(shape = RoundedCornerShape(9.dp),
-                enabled = name.isNotBlank() && position.isNotBlank(),
+                enabled = name.isNotBlank() && position.isNotBlank() && skills.isNotBlank() && experience.toIntOrNull() != null,
                 onClick = { onSave(candidate.copy(name = name.trim(), position = position.trim(), email = email.trim(), phone = phone.trim(), experienceYears = experience.toIntOrNull() ?: 0, skills = skills.trim(), note = note.trim())) }
             ) { Text("Lưu thay đổi") }
         },

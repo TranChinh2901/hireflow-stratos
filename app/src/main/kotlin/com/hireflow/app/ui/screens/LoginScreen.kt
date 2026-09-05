@@ -26,11 +26,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Email
-import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Phone
@@ -42,8 +40,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -86,7 +82,7 @@ import com.hireflow.app.ui.theme.Teal
 fun LoginScreen(
     account: AccountUiState,
     onSignIn: (String, String) -> Unit,
-    onSignUp: (String, String, String, String, String) -> Unit,
+    onSignUp: (String, String, String, String) -> Unit,
     onOfflineDemo: () -> Unit
 ) {
     var register by rememberSaveable { mutableStateOf(false) }
@@ -94,8 +90,6 @@ fun LoginScreen(
     var email by rememberSaveable { mutableStateOf("") }
     var phone by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
-    var selectedRole by rememberSaveable { mutableStateOf("admin") }
-    var roleMenuOpen by rememberSaveable { mutableStateOf(false) }
     var acceptedTerms by rememberSaveable { mutableStateOf(false) }
     var showPassword by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
@@ -142,9 +136,6 @@ fun LoginScreen(
                         email, { email = it },
                         phone, { phone = it },
                         password, { password = it },
-                        selectedRole,
-                        roleMenuOpen, { roleMenuOpen = it },
-                        onRoleSelected = { selectedRole = it; roleMenuOpen = false },
                         acceptedTerms, { acceptedTerms = it },
                         showPassword, { showPassword = !showPassword },
                         account.configured && !account.checking
@@ -171,7 +162,7 @@ fun LoginScreen(
                     Spacer(Modifier.height(12.dp))
                     Button(
                         enabled = account.configured && !account.checking && registerValid,
-                        onClick = { onSignUp(fullName, email, phone, password, selectedRole) },
+                        onClick = { onSignUp(fullName, email, phone, password) },
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Azure),
                         modifier = Modifier.fillMaxWidth().height(44.dp)
@@ -243,13 +234,6 @@ private fun LoginForm(
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             AuthField(email, onEmailChange, "Email công việc", Icons.Rounded.Email, enabled)
             AuthField(password, onPasswordChange, "Mật khẩu", Icons.Rounded.Lock, enabled, true, showPassword, onShowPasswordChange)
-            Text(
-                "Quên mật khẩu?",
-                color = Azure,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.align(Alignment.End).padding(top = 2.dp, bottom = 1.dp)
-            )
             Button(
                 enabled = canSubmit,
                 onClick = onSubmit,
@@ -280,10 +264,6 @@ private fun RegisterForm(
     onPhoneChange: (String) -> Unit,
     password: String,
     onPasswordChange: (String) -> Unit,
-    selectedRole: String,
-    roleMenuOpen: Boolean,
-    onRoleMenuChange: (Boolean) -> Unit,
-    onRoleSelected: (String) -> Unit,
     acceptedTerms: Boolean,
     onAcceptedTermsChange: (Boolean) -> Unit,
     showPassword: Boolean,
@@ -295,28 +275,6 @@ private fun RegisterForm(
         AuthField(email, onEmailChange, "Email công việc", Icons.Rounded.Email, enabled)
         AuthField(phone, onPhoneChange, "Số điện thoại", Icons.Rounded.Phone, enabled)
         AuthField(password, onPasswordChange, "Mật khẩu", Icons.Rounded.Lock, enabled, true, showPassword, onShowPasswordChange)
-
-        Box {
-            Surface(
-                shape = RoundedCornerShape(11.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = .92f),
-                modifier = Modifier.fillMaxWidth().height(44.dp).clickable(enabled = enabled) { onRoleMenuChange(true) }
-            ) {
-                Row(Modifier.padding(horizontal = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(27.dp).background(IceBlue, CircleShape), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Rounded.Badge, null, tint = Azure, modifier = Modifier.size(16.dp))
-                    }
-                    Spacer(Modifier.size(10.dp))
-                    Text("Vai trò: ${if (selectedRole == "admin") "Admin" else "HR"}", fontSize = 14.sp, modifier = Modifier.weight(1f))
-                    Icon(Icons.Rounded.ExpandMore, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
-                }
-            }
-            DropdownMenu(expanded = roleMenuOpen, onDismissRequest = { onRoleMenuChange(false) }) {
-                DropdownMenuItem(text = { Text("Admin") }, onClick = { onRoleSelected("admin") })
-                DropdownMenuItem(text = { Text("HR") }, onClick = { onRoleSelected("hr") })
-            }
-        }
 
         Row(
             Modifier.fillMaxWidth().clickable(enabled = enabled) { onAcceptedTermsChange(!acceptedTerms) },

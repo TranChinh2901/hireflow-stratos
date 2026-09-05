@@ -21,13 +21,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hireflow.app.data.CandidateEntity
+import com.hireflow.app.data.InterviewEntity
 import com.hireflow.app.data.RecruitmentStage
+import com.hireflow.app.data.ScorecardEntity
+import com.hireflow.app.domain.RecruitmentRules
 import com.hireflow.app.ui.components.ScreenHeader
 import com.hireflow.app.ui.components.stageColor
 
 @Composable
 fun PipelineScreen(
     candidates: List<CandidateEntity>,
+    interviews: List<InterviewEntity>,
+    scorecards: List<ScorecardEntity>,
     onOpenCandidate: (Long) -> Unit,
     onMoveNext: (CandidateEntity) -> Unit,
     canManage: Boolean
@@ -37,7 +42,8 @@ fun PipelineScreen(
     var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
     val filtered = candidates.filter { query.isBlank() || it.name.contains(query, true) || it.position.contains(query, true) }
     val selected = filtered.firstOrNull { it.id == selectedId }
-    val canMove = selected != null && selected.recruitmentStage !in listOf(RecruitmentStage.HIRED, RecruitmentStage.REJECTED)
+    val advanceBlockReason = selected?.let { RecruitmentRules.advanceBlockReason(it, interviews, scorecards) }
+    val canMove = selected != null && advanceBlockReason == null
 
     Column(Modifier.fillMaxSize()) {
         ScreenHeader("Pipeline", action = {
@@ -79,8 +85,21 @@ fun PipelineScreen(
                     enabled = canMove,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(if (selected == null) "Chọn ứng viên để chuyển vòng" else if (canMove) "Chuyển sang ${selected.recruitmentStage.next().label}" else "Đã kết thúc quy trình", modifier = Modifier.weight(1f))
+                    Text(
+                        if (selected == null) "Chọn ứng viên để chuyển vòng"
+                        else if (canMove) "Chuyển sang ${selected.recruitmentStage.next().label}"
+                        else "Chưa đủ điều kiện chuyển vòng",
+                        modifier = Modifier.weight(1f)
+                    )
                     Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, modifier = Modifier.size(18.dp))
+                }
+                if (selected != null && advanceBlockReason != null) {
+                    Text(
+                        advanceBlockReason,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
                 }
             }
         }

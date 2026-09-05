@@ -58,6 +58,7 @@ import com.hireflow.app.ui.theme.Purple
 import com.hireflow.app.ui.theme.Success
 import com.hireflow.app.ui.theme.Warning
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -74,14 +75,24 @@ fun DashboardScreen(
     onOpenInterviews: () -> Unit,
     onOpenCandidates: () -> Unit
 ) {
+    val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+    val greeting = when (hour) {
+        in 5..10 -> "Chào buổi sáng"
+        in 11..13 -> "Chào buổi trưa"
+        in 14..17 -> "Chào buổi chiều"
+        else -> "Chào buổi tối"
+    }
+    val todayTasks = state.tasks.filter { isToday(it.dueAt) }
     val pendingReviews = state.candidates.count { candidate ->
-        candidate.recruitmentStage == RecruitmentStage.INTERVIEW && state.scorecards.none { it.candidateId == candidate.id }
+        candidate.recruitmentStage == RecruitmentStage.INTERVIEW &&
+            state.interviews.any { it.candidateId == candidate.id && it.completed } &&
+            state.scorecards.none { it.candidateId == candidate.id }
     }
     val metrics = listOf(
         Metric(state.interviews.count { isToday(it.scheduledAt) }, "Phỏng vấn", "Lịch hẹn hôm nay", Icons.Rounded.CalendarMonth, Azure, onOpenInterviews),
         Metric(pendingReviews, "Chờ đánh giá", "Ứng viên cần đánh giá", Icons.Rounded.Groups, Success, onOpenCandidates),
-        Metric(state.candidates.count { it.recruitmentStage == RecruitmentStage.SCREENING }, "Chờ phản hồi", "Đang ở vòng sàng lọc", Icons.Rounded.MarkEmailUnread, Warning, onOpenCandidates),
-        Metric(state.candidates.count { it.recruitmentStage == RecruitmentStage.OFFER }, "Chờ gửi offer", "Ứng viên ở vòng offer", Icons.Rounded.RateReview, Purple, onOpenCandidates)
+        Metric(state.candidates.count { it.recruitmentStage == RecruitmentStage.SCREENING }, "Đang sàng lọc", "Ứng viên cần review CV", Icons.Rounded.MarkEmailUnread, Warning, onOpenCandidates),
+        Metric(state.candidates.count { it.recruitmentStage == RecruitmentStage.OFFER }, "Chờ phản hồi offer", "Ứng viên đã nhận offer", Icons.Rounded.RateReview, Purple, onOpenCandidates)
     )
 
     Column(Modifier.fillMaxSize()) {
@@ -105,7 +116,7 @@ fun DashboardScreen(
         ) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Chào buổi sáng, ${account.profile?.fullName?.substringAfterLast(' ') ?: "Linh"}!", style = MaterialTheme.typography.titleLarge)
+                    Text("$greeting, ${account.profile?.fullName?.substringAfterLast(' ') ?: "Linh"}!", style = MaterialTheme.typography.titleLarge)
                     Text("Đây là tổng quan tuyển dụng hôm nay.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                 }
@@ -124,10 +135,10 @@ fun DashboardScreen(
                 Spacer(Modifier.height(2.dp))
                 SectionTitle("Công việc hôm nay", "Xem lịch", onOpenInterviews)
             }
-            if (state.tasks.isEmpty()) {
+            if (todayTasks.isEmpty()) {
                 item { Text("Không có công việc cần xử lý.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             } else {
-                items(state.tasks, key = { it.id }) { task ->
+                items(todayTasks, key = { it.id }) { task ->
                     TaskRow(task, onClick = { onToggleTask(task) })
                 }
             }

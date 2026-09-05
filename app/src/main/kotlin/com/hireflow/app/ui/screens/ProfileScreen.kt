@@ -22,21 +22,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Logout
-import androidx.compose.material.icons.automirrored.rounded.NavigateNext
 import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.Business
 import androidx.compose.material.icons.rounded.CalendarMonth
-import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.DarkMode
-import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Email
 import androidx.compose.material.icons.rounded.Groups
-import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.NotificationsNone
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.RateReview
-import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -120,14 +115,7 @@ fun ProfileScreen(
         }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box {
-                    InitialAvatar(displayName, Modifier.size(64.dp))
-                    Box(
-                        Modifier.size(23.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surface)
-                            .align(Alignment.BottomEnd),
-                        contentAlignment = Alignment.Center
-                    ) { Icon(Icons.Rounded.CameraAlt, null, tint = Teal, modifier = Modifier.size(14.dp)) }
-                }
+                InitialAvatar(displayName, Modifier.size(64.dp))
                 Spacer(Modifier.size(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(displayName, color = MaterialTheme.colorScheme.onBackground, fontSize = 19.sp, lineHeight = 21.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -161,25 +149,6 @@ fun ProfileScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .6f))
                 SettingRow(Icons.Rounded.DarkMode, "Dark mode") {
                     Switch(checked = state.darkMode, onCheckedChange = onToggleTheme, modifier = Modifier.scale(.82f))
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .6f))
-                SettingRow(Icons.Rounded.Language, "Ngôn ngữ") {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Tiếng Việt", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Icon(Icons.AutoMirrored.Rounded.NavigateNext, null, modifier = Modifier.size(19.dp))
-                    }
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .6f))
-                SettingRow(Icons.Rounded.Security, "Bảo mật") {
-                    Icon(Icons.AutoMirrored.Rounded.NavigateNext, null, modifier = Modifier.size(19.dp))
-                }
-            }
-        }
-        item { Text("Tài liệu", color = MaterialTheme.colorScheme.onBackground, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
-        item {
-            ProfileCard {
-                SettingRow(Icons.Rounded.Description, "CV mẫu / File nội bộ") {
-                    Icon(Icons.AutoMirrored.Rounded.NavigateNext, null, modifier = Modifier.size(19.dp))
                 }
             }
         }
