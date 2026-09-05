@@ -1,5 +1,10 @@
 package com.hireflow.app.ui.screens
 
+import com.hireflow.app.ui.components.HeaderAction
+import com.hireflow.app.ui.components.HeaderOverflow
+import com.hireflow.app.ui.components.LocalHeaderNavigation
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -25,12 +30,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.Badge
-import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Email
 import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.RateReview
 import androidx.compose.material.icons.rounded.Work
@@ -46,20 +49,16 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hireflow.app.data.CandidateEntity
@@ -104,129 +103,130 @@ fun CandidateDetailScreen(
         scope.launch { snackbar.showSnackbar("Đã đính kèm CV PDF") }
     }
 
-    Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-            ScreenHeader(
-                "Chi tiết ứng viên",
-                onBack = onBack,
-                action = {
-                    if (canManage) androidx.compose.material3.IconButton(onClick = { showEdit = true }) {
-                        Icon(Icons.Rounded.Edit, "Sửa hồ sơ")
-                    }
-                }
-            )
-            Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    InitialAvatar(candidate.name, Modifier.size(72.dp))
-                    Spacer(Modifier.size(14.dp))
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(candidate.name, style = MaterialTheme.typography.headlineMedium)
-                        Text(candidate.position, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        StagePill(candidate.recruitmentStage)
-                    }
-                }
-
-                InfoCard(Modifier.fillMaxWidth()) {
-                    Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
-                        ContactLine(Icons.Rounded.Email, candidate.email.ifBlank { "Chưa cập nhật email" })
-                        ContactLine(Icons.Rounded.Phone, candidate.phone.ifBlank { "Chưa cập nhật số điện thoại" })
-                        ContactLine(Icons.Rounded.Work, "${candidate.experienceYears} năm kinh nghiệm")
-                        ContactLine(Icons.Rounded.LocationOn, "Hà Nội")
-                    }
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionTitle("Kỹ năng")
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.fillMaxWidth()) {
-                        candidate.skillList.take(4).forEach { skill ->
-                            Text(skill, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer).padding(horizontal = 10.dp, vertical = 6.dp))
+    Column(Modifier.fillMaxSize()) {
+        ScreenHeader("", onBack = onBack, action = {
+            if (canManage) HeaderAction(Icons.Rounded.Edit, "Sửa hồ sơ") { showEdit = true }
+            HeaderOverflow(buildList {
+                add("Đánh giá ứng viên" to { onReview(candidate.id) })
+                if (canManage) add("Đính kèm CV" to { pdfLauncher.launch(arrayOf("application/pdf")) })
+            })
+        })
+        Box(Modifier.weight(1f)) {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        InitialAvatar(candidate.name, Modifier.size(64.dp))
+                        Spacer(Modifier.size(14.dp))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(candidate.name, style = MaterialTheme.typography.titleLarge)
+                            Text(candidate.position, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            StagePill(candidate.recruitmentStage)
                         }
                     }
-                    if (candidate.skillList.size > 4) Text("+ ${candidate.skillList.size - 4} kỹ năng khác", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
 
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionTitle("Kinh nghiệm làm việc")
-                    InfoCard(Modifier.fillMaxWidth()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Text("${candidate.position} — TechSoft JSC", style = MaterialTheme.typography.titleMedium)
-                            Text("06/2021 – Hiện tại (${candidate.experienceYears} năm)", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("• Phát triển sản phẩm và phối hợp cùng team\n• Áp dụng best practices trong công việc\n• Tối ưu hiệu năng và xử lý vấn đề", style = MaterialTheme.typography.bodyMedium)
+                    Column(Modifier.fillMaxWidth()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
+                            ContactLine(Icons.Rounded.Email, candidate.email.ifBlank { "Chưa cập nhật email" })
+                            ContactLine(Icons.Rounded.Phone, candidate.phone.ifBlank { "Chưa cập nhật số điện thoại" })
+                            ContactLine(Icons.Rounded.Work, "${candidate.experienceYears} năm kinh nghiệm")
+
                         }
                     }
-                }
 
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionTitle("Ghi chú nội bộ")
-                    InfoCard(Modifier.fillMaxWidth()) {
-                        Text(candidate.note.ifBlank { "Chưa có ghi chú nội bộ." }, style = MaterialTheme.typography.bodyMedium)
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SectionTitle("Kỹ năng")
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.fillMaxWidth()) {
+                            candidate.skillList.forEach { skill ->
+                                Text(skill, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer).padding(horizontal = 10.dp, vertical = 6.dp))
+                            }
+                        }
+
                     }
-                }
 
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SectionTitle("CV đính kèm")
-                    InfoCard(Modifier.fillMaxWidth()) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(42.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFFFE7E7)), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Rounded.Description, null, tint = Color(0xFFC92F3F))
-                            }
-                            Spacer(Modifier.size(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(if (candidate.cvUri == null) "Chưa có CV" else "${candidate.name.replace(" ", "_")}_CV.pdf", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(if (candidate.cvUri == null) "Chọn file PDF từ điện thoại" else "Đã lưu quyền truy cập", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            if (candidate.cvUri != null) {
-                                Icon(
-                                    Icons.Rounded.Download,
-                                    "Mở CV",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(38.dp).clip(CircleShape).clickable {
-                                        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(candidate.cvUri)).apply {
-                                            setDataAndType(android.net.Uri.parse(candidate.cvUri), "application/pdf")
-                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                        }
-                                        try { context.startActivity(intent) } catch (_: ActivityNotFoundException) { scope.launch { snackbar.showSnackbar("Thiết bị chưa có ứng dụng đọc PDF") } }
-                                    }.padding(8.dp)
-                                )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SectionTitle("Kinh nghiệm làm việc")
+                        InfoCard(Modifier.fillMaxWidth()) {
+                            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                Text(candidate.position, style = MaterialTheme.typography.titleMedium)
+                                Text("${candidate.experienceYears} năm kinh nghiệm", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Xem quá trình làm việc chi tiết trong CV đính kèm.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
-                    if (canManage) OutlinedButton(onClick = { pdfLauncher.launch(arrayOf("application/pdf")) }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Rounded.AttachFile, null)
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SectionTitle("Ghi chú nội bộ")
+                        InfoCard(Modifier.fillMaxWidth()) {
+                            Text(candidate.note.ifBlank { "Chưa có ghi chú nội bộ." }, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SectionTitle("CV đính kèm")
+                        InfoCard(Modifier.fillMaxWidth()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(42.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFFFE7E7)), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Rounded.Description, null, tint = Color(0xFFC92F3F))
+                                }
+                                Spacer(Modifier.size(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(if (candidate.cvUri == null) "Chưa có CV" else "${candidate.name.replace(" ", "_")}_CV.pdf", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(if (candidate.cvUri == null) "Chọn file PDF từ điện thoại" else "Đã lưu quyền truy cập", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                if (candidate.cvUri != null) {
+                                    Icon(
+                                        Icons.Rounded.Download,
+                                        "Mở CV",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(38.dp).clip(CircleShape).clickable {
+                                            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(candidate.cvUri)).apply {
+                                                setDataAndType(android.net.Uri.parse(candidate.cvUri), "application/pdf")
+                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            }
+                                            try { context.startActivity(intent) } catch (_: ActivityNotFoundException) { scope.launch { snackbar.showSnackbar("Thiết bị chưa có ứng dụng đọc PDF") } }
+                                        }.padding(8.dp)
+                                    )
+                                }
+                            }
+                        }
+                        if (canManage) OutlinedButton(shape = RoundedCornerShape(9.dp), onClick = { pdfLauncher.launch(arrayOf("application/pdf")) }, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Rounded.AttachFile, null)
+                            Spacer(Modifier.size(7.dp))
+                            Text(if (candidate.cvUri == null) "Đính kèm CV PDF" else "Thay CV")
+                        }
+                    }
+
+                    if (scorecard != null) {
+                        InfoCard(Modifier.fillMaxWidth()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Rounded.RateReview, null, tint = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.size(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("Đã có phiếu đánh giá", style = MaterialTheme.typography.titleMedium)
+                                    Text("${scorecard.conclusion} · ${"%.1f".format(scorecard.average)}/5", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+
+                    FilledTonalButton(shape = RoundedCornerShape(9.dp), onClick = { onReview(candidate.id) }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Rounded.RateReview, null)
                         Spacer(Modifier.size(7.dp))
-                        Text(if (candidate.cvUri == null) "Đính kèm CV PDF" else "Thay CV")
+                        Text(if (scorecard == null) "Mở Blind Review & chấm điểm" else "Xem lại đánh giá")
                     }
-                }
-
-                if (scorecard != null) {
-                    InfoCard(Modifier.fillMaxWidth()) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Rounded.RateReview, null, tint = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.size(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Đã có phiếu đánh giá", style = MaterialTheme.typography.titleMedium)
-                                Text("${scorecard.conclusion} · ${"%.1f".format(scorecard.average)}/5", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+                    if (canManage && candidate.recruitmentStage != RecruitmentStage.HIRED && candidate.recruitmentStage != RecruitmentStage.REJECTED) {
+                        Button(shape = RoundedCornerShape(9.dp), onClick = { onMoveNext(candidate) }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Chuyển sang ${candidate.recruitmentStage.next().label}", modifier = Modifier.weight(1f))
+                            Icon(Icons.AutoMirrored.Rounded.ArrowForward, null)
                         }
+                        OutlinedButton(shape = RoundedCornerShape(9.dp), onClick = { onReject(candidate) }, modifier = Modifier.fillMaxWidth()) { Text("Từ chối ứng viên", color = MaterialTheme.colorScheme.error) }
                     }
+                    Spacer(Modifier.size(28.dp))
                 }
-
-                FilledTonalButton(onClick = { onReview(candidate.id) }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Rounded.RateReview, null)
-                    Spacer(Modifier.size(7.dp))
-                    Text(if (scorecard == null) "Mở Blind Review & chấm điểm" else "Xem lại đánh giá")
-                }
-                if (canManage && candidate.recruitmentStage != RecruitmentStage.HIRED && candidate.recruitmentStage != RecruitmentStage.REJECTED) {
-                    Button(onClick = { onMoveNext(candidate) }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Chuyển sang ${candidate.recruitmentStage.next().label}", modifier = Modifier.weight(1f))
-                        Icon(Icons.AutoMirrored.Rounded.ArrowForward, null)
-                    }
-                    OutlinedButton(onClick = { onReject(candidate) }, modifier = Modifier.fillMaxWidth()) { Text("Từ chối ứng viên", color = MaterialTheme.colorScheme.error) }
-                }
-                Spacer(Modifier.size(28.dp))
             }
+            SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
         }
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+
     }
 
     if (showEdit) EditCandidateDialog(
@@ -273,7 +273,7 @@ private fun EditCandidateDialog(candidate: CandidateEntity, onDismiss: () -> Uni
             }
         },
         confirmButton = {
-            Button(
+            Button(shape = RoundedCornerShape(9.dp),
                 enabled = name.isNotBlank() && position.isNotBlank(),
                 onClick = { onSave(candidate.copy(name = name.trim(), position = position.trim(), email = email.trim(), phone = phone.trim(), experienceYears = experience.toIntOrNull() ?: 0, skills = skills.trim(), note = note.trim())) }
             ) { Text("Lưu thay đổi") }

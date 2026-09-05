@@ -8,22 +8,25 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,8 +40,6 @@ import com.hireflow.app.data.CandidateEntity
 import com.hireflow.app.data.RecruitmentStage
 import com.hireflow.app.ui.theme.Azure
 import com.hireflow.app.ui.theme.Danger
-import com.hireflow.app.ui.theme.Muted
-import com.hireflow.app.ui.theme.Navy
 import com.hireflow.app.ui.theme.Purple
 import com.hireflow.app.ui.theme.Success
 import com.hireflow.app.ui.theme.Teal
@@ -56,28 +57,63 @@ fun HireFlowLogo(compact: Boolean = false) {
     }
 }
 
+val LocalHeaderNavigation = staticCompositionLocalOf<(String) -> Unit> { {} }
+
+@Composable
+fun HeaderAction(icon: ImageVector, description: String, onClick: () -> Unit) {
+    IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) {
+        Icon(icon, description, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+@Composable
+fun HeaderOverflow(items: List<Pair<String, () -> Unit>>) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        HeaderAction(Icons.Rounded.MoreVert, "Thao tác khác") { expanded = true }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            items.forEach { (label, action) ->
+                DropdownMenuItem(text = { Text(label) }, onClick = { expanded = false; action() })
+            }
+        }
+    }
+}
+
 @Composable
 fun ScreenHeader(
     title: String,
     subtitle: String? = null,
     onBack: (() -> Unit)? = null,
+    menuItems: List<Pair<String, () -> Unit>> = emptyList(),
     action: (@Composable () -> Unit)? = null
 ) {
+    val navigate = LocalHeaderNavigation.current
+    var menuOpen by remember { mutableStateOf(false) }
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)
+            .heightIn(min = 56.dp).padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (onBack != null) {
-            IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Quay lại")
+            HeaderAction(Icons.AutoMirrored.Rounded.ArrowBack, "Quay lại", onBack)
+        } else {
+            Box {
+                HeaderAction(Icons.Rounded.Menu, "Mở menu") { menuOpen = true }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    listOf("Tổng quan" to "dashboard", "Ứng viên" to "candidates", "Pipeline" to "pipeline", "Lịch phỏng vấn" to "interviews", "Đánh giá" to "scorecards", "Tài khoản" to "profile").forEach { (label, route) ->
+                        DropdownMenuItem(text = { Text(label) }, onClick = { menuOpen = false; navigate(route) })
+                    }
+                    menuItems.forEach { (label, action) ->
+                        DropdownMenuItem(text = { Text(label) }, onClick = { menuOpen = false; action() })
+                    }
+                }
             }
-            Spacer(Modifier.size(4.dp))
         }
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleLarge)
-            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(Modifier.weight(1f).padding(start = 4.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        action?.invoke()
+        Row(verticalAlignment = Alignment.CenterVertically) { action?.invoke() }
     }
 }
 
@@ -129,29 +165,41 @@ fun StagePill(stage: RecruitmentStage) {
         color = color,
         style = MaterialTheme.typography.labelMedium,
         fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.clip(RoundedCornerShape(50)).background(color.copy(alpha = .11f)).padding(horizontal = 9.dp, vertical = 5.dp)
+        modifier = Modifier.clip(RoundedCornerShape(50)).background(color.copy(alpha = .11f)).padding(horizontal = 8.dp, vertical = 3.dp)
     )
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun CandidateRow(candidate: CandidateEntity, onClick: () -> Unit, compact: Boolean = false) {
     Card(
         onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .8f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        elevation = CardDefaults.cardElevation(0.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(Modifier.padding(if (compact) 10.dp else 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            InitialAvatar(candidate.name, Modifier.size(if (compact) 36.dp else 48.dp))
-            Spacer(Modifier.size(12.dp))
+        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.Top) {
+            InitialAvatar(candidate.name, Modifier.size(if (compact) 36.dp else 40.dp))
+            Spacer(Modifier.size(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(candidate.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(candidate.position, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                if (!compact) Text("${candidate.experienceYears} năm kinh nghiệm", style = MaterialTheme.typography.labelMedium, color = Muted)
+                Text(candidate.position, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (!compact) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("${candidate.experienceYears} năm kinh nghiệm", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                        StagePill(candidate.recruitmentStage)
+                    }
+                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        candidate.skillList.take(3).forEach { skill ->
+                            Text(skill, style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(5.dp)).padding(horizontal = 6.dp, vertical = 2.dp))
+                        }
+                    }
+                }
             }
-            if (!compact) StagePill(candidate.recruitmentStage)
         }
     }
 }
@@ -160,7 +208,7 @@ fun CandidateRow(candidate: CandidateEntity, onClick: () -> Unit, compact: Boole
 fun InfoCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     Card(
         modifier = modifier,
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .75f)),
         elevation = CardDefaults.cardElevation(0.dp)

@@ -1,7 +1,14 @@
 package com.hireflow.app.ui
 
+import androidx.compose.runtime.CompositionLocalProvider
+import com.hireflow.app.ui.components.LocalHeaderNavigation
+import androidx.compose.runtime.getValue
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Dashboard
@@ -16,7 +23,6 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -62,7 +68,7 @@ fun HireFlowApp(viewModel: HireFlowViewModel) {
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
             bottomBar = {
-                if (showBottomBar) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                if (showBottomBar) NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
                     bottomDestinations.forEach { destination ->
                         val selected = currentRoute == destination.route
                         NavigationBarItem(
@@ -74,12 +80,12 @@ fun HireFlowApp(viewModel: HireFlowViewModel) {
                                     restoreState = true
                                 }
                             },
-                            icon = { Icon(destination.icon, destination.label) },
-                            label = { Text(destination.label) },
+                            icon = { Icon(destination.icon, destination.label, modifier = Modifier.size(21.dp)) },
+                            label = { Text(destination.label, style = MaterialTheme.typography.labelMedium, maxLines = 1) },
                             colors = NavigationBarItemDefaults.colors(
                                 selectedIconColor = MaterialTheme.colorScheme.primary,
                                 selectedTextColor = MaterialTheme.colorScheme.primary,
-                                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                indicatorColor = Color.Transparent,
                                 unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                 unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -88,92 +94,100 @@ fun HireFlowApp(viewModel: HireFlowViewModel) {
                 }
             }
         ) { padding ->
-            Box(Modifier.padding(padding)) {
-                NavHost(navController = navController, startDestination = "dashboard") {
-                    composable("dashboard") {
-                        DashboardScreen(
-                            state = state,
-                            onToggleTask = viewModel::toggleTask,
-                            onToggleTheme = viewModel::setDarkMode,
-                            account = account,
-                            onSync = viewModel::syncNow,
-                            onOpenProfile = { navController.navigate("profile") },
-                            onOpenInterviews = { navController.navigate("interviews") },
-                            onOpenCandidates = { navController.navigate("candidates") }
-                        )
-                    }
-                    composable("candidates") {
-                        CandidatesScreen(
-                            candidates = state.candidates,
-                            onAddCandidate = viewModel::addCandidate,
-                            canManage = account.canManageRecruitment,
-                            onOpenCandidate = { navController.navigate("candidate/$it") }
-                        )
-                    }
-                    composable("pipeline") {
-                        PipelineScreen(
-                            candidates = state.candidates,
-                            onOpenCandidate = { navController.navigate("candidate/$it") },
-                            onMoveNext = viewModel::moveNext,
-                            canManage = account.canManageRecruitment
-                        )
-                    }
-                    composable("interviews") {
-                        InterviewsScreen(
-                            candidates = state.candidates,
-                            interviews = state.interviews,
-                            onAddInterview = viewModel::addInterview,
-                            notificationsEnabled = state.notificationsEnabled,
-                            canSchedule = account.canManageRecruitment,
-                            onOpenCandidate = { navController.navigate("candidate/$it") },
-                            onReview = { navController.navigate("scorecard/$it") }
-                        )
-                    }
-                    composable("scorecards") {
-                        ScorecardScreen(
-                            candidates = state.candidates,
-                            scorecards = state.scorecards,
-                            initialCandidateId = null,
-                            onSave = viewModel::saveScorecard,
-                            onMoveNext = viewModel::moveNext,
-                            onBack = null
-                        )
-                    }
-                    composable("profile") {
-                        ProfileScreen(
-                            account = account,
-                            state = state,
-                            onBack = navController::navigateUp,
-                            onToggleTheme = viewModel::setDarkMode,
-                            onToggleNotifications = viewModel::setNotificationsEnabled,
-                            onUpdateProfile = viewModel::updateProfile,
-                            onSignOut = viewModel::signOut
-                        )
-                    }
-                    composable("candidate/{id}") { backStack ->
-                        val id = backStack.arguments?.getString("id")?.toLongOrNull()
-                        CandidateDetailScreen(
-                            candidate = state.candidates.firstOrNull { it.id == id },
-                            scorecard = state.scorecards.firstOrNull { it.candidateId == id },
-                            onBack = navController::navigateUp,
-                            onAttachCv = viewModel::attachCv,
-                            onUpdate = viewModel::updateCandidate,
-                            canManage = account.canManageRecruitment,
-                            onMoveNext = viewModel::moveNext,
-                            onReject = viewModel::reject,
-                            onReview = { navController.navigate("scorecard/$it") }
-                        )
-                    }
-                    composable("scorecard/{id}") { backStack ->
-                        val id = backStack.arguments?.getString("id")?.toLongOrNull()
-                        ScorecardScreen(
-                            candidates = state.candidates,
-                            scorecards = state.scorecards,
-                            initialCandidateId = id,
-                            onSave = viewModel::saveScorecard,
-                            onMoveNext = viewModel::moveNext,
-                            onBack = navController::navigateUp
-                        )
+            CompositionLocalProvider(LocalHeaderNavigation provides { route ->
+                navController.navigate(route) {
+                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                }
+            }) {
+                Box(Modifier.padding(padding).consumeWindowInsets(padding)) {
+                    NavHost(navController = navController, startDestination = "dashboard") {
+                        composable("dashboard") {
+                            DashboardScreen(
+                                state = state,
+                                onToggleTask = viewModel::toggleTask,
+                                onToggleTheme = viewModel::setDarkMode,
+                                account = account,
+                                onSync = viewModel::syncNow,
+                                onOpenProfile = { navController.navigate("profile") },
+                                onOpenInterviews = { navController.navigate("interviews") },
+                                onOpenCandidates = { navController.navigate("candidates") }
+                            )
+                        }
+                        composable("candidates") {
+                            CandidatesScreen(
+                                candidates = state.candidates,
+                                onAddCandidate = viewModel::addCandidate,
+                                canManage = account.canManageRecruitment,
+                                onOpenCandidate = { navController.navigate("candidate/$it") }
+                            )
+                        }
+                        composable("pipeline") {
+                            PipelineScreen(
+                                candidates = state.candidates,
+                                onOpenCandidate = { navController.navigate("candidate/$it") },
+                                onMoveNext = viewModel::moveNext,
+                                canManage = account.canManageRecruitment
+                            )
+                        }
+                        composable("interviews") {
+                            InterviewsScreen(
+                                candidates = state.candidates,
+                                interviews = state.interviews,
+                                onAddInterview = viewModel::addInterview,
+                                notificationsEnabled = state.notificationsEnabled,
+                                canSchedule = account.canManageRecruitment,
+                                onOpenCandidate = { navController.navigate("candidate/$it") },
+                                onReview = { navController.navigate("scorecard/$it") }
+                            )
+                        }
+                        composable("scorecards") {
+                            ScorecardScreen(
+                                candidates = state.candidates,
+                                scorecards = state.scorecards,
+                                initialCandidateId = null,
+                                onSave = viewModel::saveScorecard,
+                                onMoveNext = viewModel::moveNext,
+                                onBack = null
+                            )
+                        }
+                        composable("profile") {
+                            ProfileScreen(
+                                account = account,
+                                state = state,
+                                onBack = navController::navigateUp,
+                                onToggleTheme = viewModel::setDarkMode,
+                                onToggleNotifications = viewModel::setNotificationsEnabled,
+                                onUpdateProfile = viewModel::updateProfile,
+                                onSignOut = viewModel::signOut
+                            )
+                        }
+                        composable("candidate/{id}") { backStack ->
+                            val id = backStack.arguments?.getString("id")?.toLongOrNull()
+                            CandidateDetailScreen(
+                                candidate = state.candidates.firstOrNull { it.id == id },
+                                scorecard = state.scorecards.firstOrNull { it.candidateId == id },
+                                onBack = navController::navigateUp,
+                                onAttachCv = viewModel::attachCv,
+                                onUpdate = viewModel::updateCandidate,
+                                canManage = account.canManageRecruitment,
+                                onMoveNext = viewModel::moveNext,
+                                onReject = viewModel::reject,
+                                onReview = { navController.navigate("scorecard/$it") }
+                            )
+                        }
+                        composable("scorecard/{id}") { backStack ->
+                            val id = backStack.arguments?.getString("id")?.toLongOrNull()
+                            ScorecardScreen(
+                                candidates = state.candidates,
+                                scorecards = state.scorecards,
+                                initialCandidateId = id,
+                                onSave = viewModel::saveScorecard,
+                                onMoveNext = viewModel::moveNext,
+                                onBack = navController::navigateUp
+                            )
+                        }
                     }
                 }
             }

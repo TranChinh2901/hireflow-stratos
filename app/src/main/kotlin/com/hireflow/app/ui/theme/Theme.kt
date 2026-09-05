@@ -1,7 +1,6 @@
 package com.hireflow.app.ui.theme
 
 import android.app.Activity
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -15,16 +14,17 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 
 val Navy = Color(0xFF0D2B57)
 val Azure = Color(0xFF1769E8)
 val Teal = Color(0xFF1C8494)
 val IceBlue = Color(0xFFEAF3FF)
-val AppBackground = Color(0xFFF7F9FC)
-val Ink = Color(0xFF172033)
+val AppBackground = Color(0xFFFFFFFF)
+val Ink = Color(0xFF10234A)
 val Muted = Color(0xFF667085)
-val Border = Color(0xFFE5EAF1)
+val Border = Color(0xFFEBEEF4)
 val Success = Color(0xFF189568)
 val Warning = Color(0xFFE18A18)
 val Danger = Color(0xFFD9485F)
@@ -36,6 +36,8 @@ private val LightColors = lightColorScheme(
     primaryContainer = IceBlue,
     onPrimaryContainer = Navy,
     secondary = Teal,
+    secondaryContainer = IceBlue,
+    onSecondaryContainer = Azure,
     tertiary = Purple,
     background = AppBackground,
     surface = Color.White,
@@ -89,5 +91,16 @@ fun HireFlowTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composab
             }
         }
     }
-    MaterialTheme(colorScheme = colors, typography = HireFlowTypography, content = content)
+    MaterialTheme(
+        colorScheme = colors,
+        typography = HireFlowTypography,
+        shapes = androidx.compose.material3.Shapes(
+            extraSmall = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+            small = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+            medium = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
+            large = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+            extraLarge = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
+        ),
+        content = content
+    )
 }
