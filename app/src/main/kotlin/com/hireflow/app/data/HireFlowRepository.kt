@@ -22,8 +22,15 @@ class HireFlowRepository(private val dao: HireFlowDao) {
         dao.updateInterviewCandidateSnapshot(candidate.id, candidate.name, candidate.position, updatedAt)
     }
 
-    suspend fun attachCv(candidateId: Long, uri: String, remotePath: String? = null) =
-        dao.updateCv(candidateId, uri, remotePath, System.currentTimeMillis())
+    suspend fun attachCv(candidateId: Long, uri: String, remotePath: String? = null, fileName: String? = null) =
+        dao.updateCv(candidateId, uri, remotePath, System.currentTimeMillis(), fileName)
+
+    suspend fun deleteCandidate(candidateId: Long) {
+        dao.deleteInterviewsForCandidate(candidateId)
+        dao.deleteScorecardsForCandidate(candidateId)
+        dao.deleteHistoryForCandidate(candidateId)
+        dao.deleteCandidateById(candidateId)
+    }
 
     suspend fun moveNext(candidate: CandidateEntity, actorId: String? = null) {
         val current = requireNotNull(dao.candidateById(candidate.id)) { "Không tìm thấy ứng viên." }
@@ -115,6 +122,19 @@ class HireFlowRepository(private val dao: HireFlowDao) {
     suspend fun toggleTask(task: HrTaskEntity) = dao.updateTask(
         task.copy(completed = !task.completed, updatedAt = System.currentTimeMillis(), syncState = SyncState.PENDING.name)
     )
+
+    suspend fun rejectedCandidates(): List<CandidateEntity> = dao.rejectedCandidates()
+
+    suspend fun deleteRejectedCandidates(): List<CandidateEntity> {
+        val rejected = dao.rejectedCandidates()
+        if (rejected.isEmpty()) return emptyList()
+        val ids = rejected.map { it.id }
+        dao.deleteInterviewsForCandidates(ids)
+        dao.deleteScorecardsForCandidates(ids)
+        dao.deleteHistoryForCandidates(ids)
+        dao.deleteCandidatesByIds(ids)
+        return rejected
+    }
 
     internal suspend fun pendingCandidates(organizationId: String) = dao.pendingCandidates(organizationId)
     internal suspend fun pendingInterviews(organizationId: String) = dao.pendingInterviews(organizationId)

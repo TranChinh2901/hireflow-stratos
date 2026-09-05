@@ -171,7 +171,12 @@ fun StagePill(stage: RecruitmentStage) {
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-fun CandidateRow(candidate: CandidateEntity, onClick: () -> Unit, compact: Boolean = false) {
+fun CandidateRow(
+    candidate: CandidateEntity,
+    onClick: () -> Unit,
+    compact: Boolean = false,
+    trailing: (@Composable () -> Unit)? = null
+) {
     Card(
         onClick = onClick,
         shape = RoundedCornerShape(10.dp),
@@ -199,6 +204,10 @@ fun CandidateRow(candidate: CandidateEntity, onClick: () -> Unit, compact: Boole
                         }
                     }
                 }
+            }
+            if (trailing != null) {
+                Spacer(Modifier.size(4.dp))
+                Box(Modifier.padding(top = 2.dp)) { trailing() }
             }
         }
     }

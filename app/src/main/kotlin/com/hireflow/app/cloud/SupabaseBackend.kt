@@ -78,6 +78,19 @@ class SupabaseBackend {
         requireNotNull(client).from("candidates").upsert(candidate)
     }
 
+    suspend fun deleteCandidates(remoteIds: List<String>) {
+        val c = client ?: return
+        remoteIds.forEach { id ->
+            runCatching {
+                c.from("candidates").delete { filter { eq("id", id) } }
+            }
+        }
+    }
+
+    suspend fun deleteCandidate(remoteId: String) {
+        requireNotNull(client).from("candidates").delete { filter { eq("id", remoteId) } }
+    }
+
     suspend fun fetchCandidates(): List<CandidateDto> =
         requireNotNull(client).from("candidates").select().decodeList()
 

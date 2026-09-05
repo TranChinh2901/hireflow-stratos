@@ -36,6 +36,7 @@ data class CandidateDto(
     val stage: String,
     val notes: String,
     @SerialName("cv_path") val cvPath: String? = null,
+    @SerialName("cv_name") val cvName: String? = null,
     @SerialName("updated_at") val updatedAt: String
 )
 

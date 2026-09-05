@@ -139,7 +139,9 @@ fun HireFlowApp(viewModel: HireFlowViewModel) {
                                 candidates = state.candidates,
                                 onAddCandidate = viewModel::addCandidate,
                                 canManage = account.canManageRecruitment,
-                                onOpenCandidate = { navController.navigate("candidate/$it") }
+                                onOpenCandidate = { navController.navigate("candidate/$it") },
+                                onDeleteRejected = viewModel::deleteRejectedCandidates,
+                                onDeleteCandidate = viewModel::deleteCandidate
                             )
                         }
                         composable("pipeline") {
@@ -203,7 +205,8 @@ fun HireFlowApp(viewModel: HireFlowViewModel) {
                                 canManage = account.canManageRecruitment,
                                 onMoveNext = viewModel::moveNext,
                                 onReject = viewModel::reject,
-                                onReview = { navController.navigate("scorecard/$it") }
+                                onReview = { navController.navigate("scorecard/$it") },
+                                onDelete = viewModel::deleteCandidate
                             )
                         }
                         composable("scorecard/{id}") { backStack ->

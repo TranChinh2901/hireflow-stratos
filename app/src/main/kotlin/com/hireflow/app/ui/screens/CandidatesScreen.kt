@@ -37,6 +37,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Email
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Person
@@ -44,7 +45,9 @@ import androidx.compose.material.icons.rounded.PersonAdd
 import androidx.compose.material.icons.rounded.PersonSearch
 import androidx.compose.material.icons.rounded.Phone
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FloatingActionButton
@@ -83,13 +86,18 @@ fun CandidatesScreen(
     candidates: List<CandidateEntity>,
     onAddCandidate: (CandidateEntity, (Long) -> Unit) -> Unit,
     canManage: Boolean,
-    onOpenCandidate: (Long) -> Unit
+    onOpenCandidate: (Long) -> Unit,
+    onDeleteRejected: (List<CandidateEntity>) -> Unit = {},
+    onDeleteCandidate: (CandidateEntity) -> Unit = {}
 ) {
     var showFilters by rememberSaveable { mutableStateOf(false) }
     var newestFirst by rememberSaveable { mutableStateOf(true) }
     var query by rememberSaveable { mutableStateOf("") }
     var selectedStage by rememberSaveable { mutableStateOf<String?>(null) }
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
+    var showDeleteRejectedDialog by rememberSaveable { mutableStateOf(false) }
+    var candidateToDelete by remember { mutableStateOf<CandidateEntity?>(null) }
+    val rejectedCount = candidates.count { it.recruitmentStage == RecruitmentStage.REJECTED }
     val filtered = candidates.filter { candidate ->
         (query.isBlank() || candidate.name.contains(query, true) || candidate.position.contains(query, true) || candidate.skills.contains(query, true)) &&
             (selectedStage == null || candidate.stage == selectedStage)
@@ -146,6 +154,17 @@ fun CandidatesScreen(
                 item {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("${filtered.size} ứng viên", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                        if (canManage && rejectedCount > 0) {
+                            TextButton(
+                                onClick = { showDeleteRejectedDialog = true },
+                                modifier = Modifier.height(36.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp)
+                            ) {
+                                Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.size(4.dp))
+                                Text("Xóa từ chối ($rejectedCount)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+                            }
+                        }
                         TextButton(onClick = { newestFirst = !newestFirst }, modifier = Modifier.height(36.dp), contentPadding = PaddingValues(horizontal = 0.dp)) {
                             Text(if (newestFirst) "Sắp xếp: Mới nhất ↓" else "Sắp xếp: Tên A–Z ↓", style = MaterialTheme.typography.labelMedium)
                         }
@@ -155,7 +174,21 @@ fun CandidatesScreen(
                     item { EmptyState(Icons.Rounded.PersonSearch, "Không tìm thấy ứng viên", "Thử từ khóa hoặc bộ lọc khác.") }
                 } else {
                     items(filtered.size, key = { filtered[it].id }) { index ->
-                        CandidateRow(filtered[index], onClick = { onOpenCandidate(filtered[index].id) })
+                        val item = filtered[index]
+                        CandidateRow(
+                            candidate = item,
+                            onClick = { onOpenCandidate(item.id) },
+                            trailing = if (canManage && item.recruitmentStage == RecruitmentStage.REJECTED) {
+                                {
+                                    IconButton(
+                                        onClick = { candidateToDelete = item },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Rounded.Delete, "Xóa ${item.name}", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(19.dp))
+                                    }
+                                }
+                            } else null
+                        )
                     }
                 }
             }
@@ -169,6 +202,40 @@ fun CandidatesScreen(
             showAddDialog = false
         }
     )
+
+    if (showDeleteRejectedDialog) AlertDialog(
+        onDismissRequest = { showDeleteRejectedDialog = false },
+        title = { Text("Xóa ứng viên bị từ chối?") },
+        text = { Text("Sẽ xóa vĩnh viễn $rejectedCount hồ sơ ở vòng Từ chối cùng lịch phỏng vấn, đánh giá và CV đã lưu. Không thể hoàn tác.") },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onDeleteRejected(candidates)
+                    showDeleteRejectedDialog = false
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) { Text("Xóa $rejectedCount hồ sơ") }
+        },
+        dismissButton = { TextButton(onClick = { showDeleteRejectedDialog = false }) { Text("Hủy") } }
+    )
+
+    candidateToDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { candidateToDelete = null },
+            title = { Text("Xóa ${target.name}?") },
+            text = { Text("Hồ sơ đang ở vòng Từ chối sẽ bị xóa vĩnh viễn cùng lịch, đánh giá và CV. Ứng viên giữ lại để xem xét đợt sau thì bấm Hủy.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteCandidate(target)
+                        candidateToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("Xóa") }
+            },
+            dismissButton = { TextButton(onClick = { candidateToDelete = null }) { Text("Giữ lại") } }
+        )
+    }
 }
 
 private data class ExperienceOption(val key: String, val label: String, val years: Int)

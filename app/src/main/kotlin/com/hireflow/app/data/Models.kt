@@ -42,6 +42,7 @@ data class CandidateEntity(
     @ColumnInfo(defaultValue = "''") val remoteId: String = UUID.randomUUID().toString(),
     val organizationId: String? = null,
     val remoteCvPath: String? = null,
+    val cvFileName: String? = null,
     @ColumnInfo(defaultValue = "0") val updatedAt: Long = System.currentTimeMillis(),
     @ColumnInfo(defaultValue = "'PENDING'") val syncState: String = SyncState.PENDING.name
 ) {

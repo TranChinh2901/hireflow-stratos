@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.core.net.toUri
 import com.hireflow.app.data.CandidateEntity
+import com.hireflow.app.data.CvStorage
 import com.hireflow.app.data.HireFlowRepository
 import com.hireflow.app.data.HrTaskEntity
 import com.hireflow.app.data.InterviewEntity
@@ -11,6 +12,7 @@ import com.hireflow.app.data.ScorecardEntity
 import com.hireflow.app.data.StageHistoryEntity
 import com.hireflow.app.data.SyncState
 import kotlinx.coroutines.flow.Flow
+import java.io.File
 import java.time.Instant
 
 class CloudSyncManager(
@@ -41,22 +43,43 @@ class CloudSyncManager(
     }
 
     suspend fun uploadCandidateCv(candidate: CandidateEntity, uri: Uri, profile: UserProfileDto): String {
-        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: error("Không thể đọc file CV")
+        // Ưu tiên file thật đã lưu trong app; nếu uri ngoài thì copy vào app trước rồi upload.
+        val file = CvStorage.findLocalFile(context, candidate.remoteId)
+            ?: runCatching { CvStorage.saveFromUri(context, candidate.remoteId, uri) }.getOrNull()
+        val bytes = when {
+            file != null && file.exists() -> file.readBytes()
+            else -> context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        } ?: error("Không thể đọc file CV")
+        val fileName = CvStorage.queryDisplayName(context, uri) ?: candidate.cvFileName
         val path = "${profile.organizationId}/${candidate.remoteId}/cv.pdf"
         backend.uploadCv(path, bytes)
-        repository.attachCv(candidate.id, uri.toString(), path)
+        val internalUri = if (file != null) {
+            CvStorage.providerUri(context, file).toString()
+        } else uri.toString()
+        repository.attachCv(candidate.id, internalUri, path, fileName)
+        return path
+    }
+
+    /** Upload từ file nội bộ đã lưu (dùng ngay sau khi attachCv để lưu + upload thật). */
+    suspend fun uploadCandidateCvFromFile(candidate: CandidateEntity, file: File, profile: UserProfileDto): String {
+        require(file.exists() && file.length() > 0) { "File CV chưa được lưu trong app" }
+        val path = "${profile.organizationId}/${candidate.remoteId}/cv.pdf"
+        backend.uploadCv(path, file.readBytes())
+        val internalUri = CvStorage.providerUri(context, file).toString()
+        repository.attachCv(candidate.id, internalUri, path, candidate.cvFileName)
         return path
     }
 
     private suspend fun pushPending(profile: UserProfileDto) {
         repository.pendingCandidates(profile.organizationId).forEach { local ->
-            val ready = if (local.cvUri != null && local.remoteCvPath == null) {
-                val remotePath = uploadCandidateCv(local, local.cvUri.toUri(), profile)
-                local.copy(remoteCvPath = remotePath)
-            } else local
-            backend.upsertCandidate(ready.toDto(profile.organizationId))
-            repository.markCandidateSynced(local.remoteId, profile.organizationId)
+            runCatching {
+                val ready = if (local.cvUri != null && local.remoteCvPath == null) {
+                    val remotePath = uploadCandidateCv(local, local.cvUri.toUri(), profile)
+                    local.copy(remoteCvPath = remotePath)
+                } else local
+                backend.upsertCandidate(ready.toDto(profile.organizationId))
+                repository.markCandidateSynced(local.remoteId, profile.organizationId)
+            }
         }
         repository.pendingInterviews(profile.organizationId).forEach { local ->
             val candidate = repository.candidateByLocalId(local.candidateId) ?: return@forEach
@@ -99,7 +122,7 @@ class CloudSyncManager(
     private suspend fun mergeCandidate(remote: CandidateDto) {
         val local = repository.candidateByRemoteId(remote.id)
         if (local != null && SyncConflictResolver.keepLocal(local.syncState, local.updatedAt, remote.updatedAt.toEpoch())) return
-        repository.upsertCandidate(remote.toEntity(local?.id ?: 0, local?.cvUri))
+        repository.upsertCandidate(remote.toEntity(local?.id ?: 0, local?.cvUri, local?.cvFileName))
     }
 
     private suspend fun mergeInterview(remote: InterviewDto) {
@@ -120,15 +143,16 @@ class CloudSyncManager(
 private fun CandidateEntity.toDto(orgId: String) = CandidateDto(
     id = remoteId, organizationId = orgId, fullName = name, position = position,
     email = email, phone = phone, experienceYears = experienceYears, skills = skillList,
-    stage = stage.lowercase(), notes = note, cvPath = remoteCvPath,
+    stage = stage.lowercase(), notes = note, cvPath = remoteCvPath, cvName = cvFileName,
     updatedAt = Instant.ofEpochMilli(updatedAt).toString()
 )
 
-private fun CandidateDto.toEntity(localId: Long, localCvUri: String?) = CandidateEntity(
+private fun CandidateDto.toEntity(localId: Long, localCvUri: String?, localCvName: String? = null) = CandidateEntity(
     id = localId, name = fullName, position = position, email = email, phone = phone,
     experienceYears = experienceYears, skills = skills.joinToString(", "), stage = stage.uppercase(),
     note = notes, cvUri = localCvUri, remoteId = id, organizationId = organizationId,
-    remoteCvPath = cvPath, updatedAt = updatedAt.toEpoch(), syncState = SyncState.SYNCED.name
+    remoteCvPath = cvPath, cvFileName = localCvName ?: cvName,
+    updatedAt = updatedAt.toEpoch(), syncState = SyncState.SYNCED.name
 )
 
 private fun InterviewEntity.toDto(orgId: String, candidateRemoteId: String) = InterviewDto(

@@ -1,20 +1,22 @@
 package com.hireflow.app
 
 import android.app.Application
-import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hireflow.app.data.CandidateEntity
+import com.hireflow.app.data.CvStorage
 import com.hireflow.app.data.HrTaskEntity
 import com.hireflow.app.data.InterviewEntity
 import com.hireflow.app.data.LocalDataScope
+import com.hireflow.app.data.RecruitmentStage
 import com.hireflow.app.data.ScorecardEntity
 import com.hireflow.app.data.StageHistoryEntity
 import com.hireflow.app.domain.RecruitmentRules
 import com.hireflow.app.preferences.SettingsStore
 import com.hireflow.app.reminder.syncInterviewReminders
 import com.hireflow.app.cloud.UserProfileDto
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -29,7 +31,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
-import java.io.File
+import kotlinx.coroutines.withContext
 
 data class AccountUiState(
     val configured: Boolean = false,
@@ -284,32 +286,64 @@ class HireFlowViewModel(application: Application) : AndroidViewModel(application
 
     fun attachCv(id: Long, uri: String) {
         viewModelScope.launch {
-            repository.attachCv(id, uri)
-            val profile = _accountState.value.profile
-            val candidate = repository.candidateByLocalId(id)
-            if (profile != null && candidate != null) {
-                runCatching { syncManager.uploadCandidateCv(candidate, uri.toUri(), profile) }
-                    .onSuccess { requestSync() }
-                    .onFailure { _notice.value = "CV đã lưu local và sẽ upload khi có mạng." }
+            runCatching {
+                val candidate = requireNotNull(repository.candidateByLocalId(id)) { "Không tìm thấy ứng viên." }
+                val sourceUri = uri.toUri()
+                // Lấy tên file gốc từ Drive/Downloads trước khi copy, để hiển thị đúng tên user chọn.
+                val originalName = CvStorage.queryDisplayName(app, sourceUri)
+                    ?: candidate.cvFileName?.takeIf { it.isNotBlank() }
+                // Copy file thật vào bộ nhớ riêng của app để lưu luôn, không phụ thuộc file gốc.
+                val file = withContext(Dispatchers.IO) {
+                    CvStorage.saveFromUri(app, candidate.remoteId, sourceUri)
+                }
+                val internalUri = CvStorage.providerUri(app, file).toString()
+                // remoteCvPath = null để buộc upload lại bản mới khi sync.
+                repository.attachCv(id, internalUri, null, originalName)
+                _notice.value = "Đã lưu CV trong app."
+                val profile = _accountState.value.profile
+                val updated = repository.candidateByLocalId(id)
+                if (profile != null && updated != null) {
+                    runCatching { syncManager.uploadCandidateCvFromFile(updated, file, profile) }
+                        .onSuccess { requestSync() }
+                        .onFailure { _notice.value = "CV đã lưu trong app, sẽ upload khi có mạng." }
+                }
+            }.onFailure {
+                _notice.value = it.message ?: "Không thể lưu CV."
             }
         }
     }
 
     fun openCv(candidate: CandidateEntity, onReady: (String) -> Unit) {
-        candidate.cvUri?.let {
-            onReady(it)
+        // 1. Ưu tiên file thật đã lưu trong app (filesDir), sống sót sau reboot/xóa file gốc.
+        CvStorage.findLocalFile(app, candidate.remoteId)?.let {
+            onReady(CvStorage.providerUri(app, it).toString())
             return
+        }
+        // 2. Migrate CV cũ đang là SAF Uri ngoài: copy vào app rồi mở.
+        candidate.cvUri?.let { oldUri ->
+            runCatching {
+                val parsed = oldUri.toUri()
+                val name = CvStorage.queryDisplayName(app, parsed) ?: candidate.cvFileName
+                val file = CvStorage.saveFromUri(app, candidate.remoteId, parsed)
+                name to CvStorage.providerUri(app, file).toString()
+            }.onSuccess { (name, internalUri) ->
+                viewModelScope.launch { repository.attachCv(candidate.id, internalUri, candidate.remoteCvPath, name) }
+                onReady(internalUri)
+                return
+            }
         }
         val remotePath = candidate.remoteCvPath ?: run {
             _notice.value = "Ứng viên chưa có CV."
             return
         }
+        // 3. Chưa có local nhưng có trên cloud: tải về filesDir và lưu luôn.
         viewModelScope.launch {
             runCatching {
-                val directory = File(app.cacheDir, "candidate_cvs").apply { mkdirs() }
-                val file = File(directory, "${candidate.remoteId}.pdf")
-                file.writeBytes(backend.downloadCv(remotePath))
-                FileProvider.getUriForFile(app, "${app.packageName}.files", file).toString()
+                val bytes = withContext(Dispatchers.IO) { backend.downloadCv(remotePath) }
+                val file = withContext(Dispatchers.IO) { CvStorage.saveBytes(app, candidate.remoteId, bytes) }
+                val internalUri = CvStorage.providerUri(app, file).toString()
+                repository.attachCv(candidate.id, internalUri, remotePath, candidate.cvFileName)
+                internalUri
             }.onSuccess(onReady)
                 .onFailure { _notice.value = "Không thể tải CV từ cloud. Hãy kiểm tra kết nối." }
         }
@@ -328,6 +362,67 @@ class HireFlowViewModel(application: Application) : AndroidViewModel(application
             runCatching { repository.reject(candidate, _accountState.value.profile?.id) }
                 .onSuccess { requestSync() }
                 .onFailure { _notice.value = it.message ?: "Không thể từ chối ứng viên." }
+        }
+    }
+
+    fun deleteRejectedCandidates() {
+        viewModelScope.launch {
+            val targets = runCatching { repository.rejectedCandidates() }
+                .getOrElse {
+                    _notice.value = it.message ?: "Không thể xóa ứng viên."
+                    return@launch
+                }
+            if (targets.isEmpty()) {
+                _notice.value = "Không có ứng viên bị từ chối để xóa."
+                return@launch
+            }
+            // Xóa trên cloud trước (best-effort, cascade xóa interview/scorecard/history),
+            // RLS chỉ cho admin xóa; nếu thất bại vẫn xóa local.
+            if (_accountState.value.authenticated) {
+                runCatching { backend.deleteCandidates(targets.map { it.remoteId }) }
+            }
+            runCatching { repository.deleteRejectedCandidates() }
+                .onSuccess { deleted ->
+                    targets.forEach { CvStorage.deleteLocalFile(app, it.remoteId) }
+                    _notice.value = "Đã xóa ${deleted.size} ứng viên bị từ chối."
+                }
+                .onFailure { _notice.value = it.message ?: "Không thể xóa ứng viên." }
+        }
+    }
+
+    fun deleteCandidate(candidate: CandidateEntity) {
+        viewModelScope.launch {
+            runCatching {
+                require(candidate.recruitmentStage == RecruitmentStage.REJECTED) { "Chỉ được xóa ứng viên đã bị từ chối." }
+                repository.deleteCandidate(candidate.id)
+                withContext(Dispatchers.IO) { CvStorage.deleteLocalFile(app, candidate.remoteId) }
+                if (_accountState.value.authenticated) {
+                    runCatching { backend.deleteCandidate(candidate.remoteId) }
+                }
+            }.onSuccess { _notice.value = "Đã xóa ${candidate.name}." }
+                .onFailure { _notice.value = it.message ?: "Không thể xóa ứng viên." }
+        }
+    }
+
+    fun deleteRejectedCandidates(candidates: List<CandidateEntity>) {
+        val rejected = candidates.filter { it.recruitmentStage == RecruitmentStage.REJECTED }
+        if (rejected.isEmpty()) {
+            _notice.value = "Không có ứng viên bị từ chối để xóa."
+            return
+        }
+        viewModelScope.launch {
+            var deleted = 0
+            rejected.forEach { candidate ->
+                runCatching {
+                    repository.deleteCandidate(candidate.id)
+                    withContext(Dispatchers.IO) { CvStorage.deleteLocalFile(app, candidate.remoteId) }
+                    if (_accountState.value.authenticated) {
+                        runCatching { backend.deleteCandidate(candidate.remoteId) }
+                    }
+                    deleted++
+                }
+            }
+            _notice.value = if (deleted > 0) "Đã xóa $deleted ứng viên bị từ chối." else "Không thể xóa ứng viên."
         }
     }
 

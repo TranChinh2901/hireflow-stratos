@@ -93,7 +93,8 @@ fun CandidateDetailScreen(
     canManage: Boolean,
     onMoveNext: (CandidateEntity) -> Unit,
     onReject: (CandidateEntity) -> Unit,
-    onReview: (Long) -> Unit
+    onReview: (Long) -> Unit,
+    onDelete: (CandidateEntity) -> Unit = {}
 ) {
     if (candidate == null) {
         Column(Modifier.fillMaxSize()) {
@@ -104,8 +105,10 @@ fun CandidateDetailScreen(
     }
     val context = LocalContext.current
     var showEdit by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val isRejected = candidate.recruitmentStage == RecruitmentStage.REJECTED
     val advanceBlockReason = RecruitmentRules.advanceBlockReason(candidate, interviews, listOfNotNull(scorecard))
     val reviewBlockReason = RecruitmentRules.reviewBlockReason(candidate, interviews)
     val pdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -121,6 +124,7 @@ fun CandidateDetailScreen(
             HeaderOverflow(buildList {
                 if (scorecard != null || reviewBlockReason == null) add("Đánh giá ứng viên" to { onReview(candidate.id) })
                 if (canManage) add("Đính kèm CV" to { pdfLauncher.launch(arrayOf("application/pdf")) })
+                if (canManage && isRejected) add("Xóa ứng viên" to { showDeleteDialog = true })
             })
         })
         Box(Modifier.weight(1f)) {
@@ -183,7 +187,9 @@ fun CandidateDetailScreen(
                                 Spacer(Modifier.size(10.dp))
                                 Column(Modifier.weight(1f)) {
                                     val hasCv = candidate.cvUri != null || candidate.remoteCvPath != null
-                                    Text(if (!hasCv) "Chưa có CV" else "${candidate.name.replace(" ", "_")}_CV.pdf", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    val displayName = candidate.cvFileName?.takeIf { it.isNotBlank() }
+                                        ?: "${candidate.name.replace(" ", "_")}_CV.pdf"
+                                    Text(if (!hasCv) "Chưa có CV" else displayName, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(if (!hasCv) "Chọn file PDF từ điện thoại" else if (candidate.cvUri != null) "Đã lưu trên thiết bị" else "Đã lưu trên cloud", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 if (candidate.cvUri != null || candidate.remoteCvPath != null) {
@@ -268,6 +274,18 @@ fun CandidateDetailScreen(
                         }
                         OutlinedButton(shape = RoundedCornerShape(9.dp), onClick = { onReject(candidate) }, modifier = Modifier.fillMaxWidth()) { Text("Từ chối ứng viên", color = MaterialTheme.colorScheme.error) }
                     }
+                    if (canManage && isRejected) {
+                        OutlinedButton(
+                            shape = RoundedCornerShape(9.dp),
+                            onClick = { showDeleteDialog = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Xóa ứng viên này", color = MaterialTheme.colorScheme.error) }
+                        Text(
+                            "Ứng viên tiềm năng thì giữ lại để xem xét đợt sau, ứng viên bị loại hẳn thì xóa.",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Spacer(Modifier.size(28.dp))
                 }
             }
@@ -284,6 +302,24 @@ fun CandidateDetailScreen(
             showEdit = false
             scope.launch { snackbar.showSnackbar("Đã cập nhật hồ sơ ứng viên") }
         }
+    )
+
+    if (showDeleteDialog) AlertDialog(
+        onDismissRequest = { showDeleteDialog = false },
+        title = { Text("Xóa ${candidate.name}?") },
+        text = { Text("Hồ sơ bị từ chối sẽ bị xóa vĩnh viễn cùng lịch, đánh giá và CV. Nếu còn muốn xem xét đợt sau thì bấm Giữ lại.") },
+        confirmButton = {
+            Button(
+                shape = RoundedCornerShape(9.dp),
+                onClick = {
+                    onDelete(candidate)
+                    showDeleteDialog = false
+                    onBack()
+                },
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) { Text("Xóa") }
+        },
+        dismissButton = { TextButton(onClick = { showDeleteDialog = false }) { Text("Giữ lại") } }
     )
 }
 

@@ -30,14 +30,41 @@ interface HireFlowDao {
     @Query("UPDATE candidates SET cvUri = :uri WHERE id = :candidateId")
     suspend fun updateCv(candidateId: Long, uri: String)
 
-    @Query("UPDATE candidates SET cvUri = :uri, remoteCvPath = :remotePath, updatedAt = :updatedAt, syncState = 'PENDING' WHERE id = :candidateId")
-    suspend fun updateCv(candidateId: Long, uri: String, remotePath: String?, updatedAt: Long)
+    @Query("UPDATE candidates SET cvUri = :uri, cvFileName = :fileName, remoteCvPath = :remotePath, updatedAt = :updatedAt, syncState = 'PENDING' WHERE id = :candidateId")
+    suspend fun updateCv(candidateId: Long, uri: String, remotePath: String?, updatedAt: Long, fileName: String?)
 
     @Query("SELECT * FROM candidates WHERE organizationId = :organizationId AND syncState != 'SYNCED'")
     suspend fun pendingCandidates(organizationId: String): List<CandidateEntity>
 
     @Query("SELECT * FROM candidates WHERE remoteId = :remoteId LIMIT 1")
     suspend fun candidateByRemoteId(remoteId: String): CandidateEntity?
+
+    @Query("SELECT * FROM candidates WHERE stage = 'REJECTED'")
+    suspend fun rejectedCandidates(): List<CandidateEntity>
+
+    @Query("DELETE FROM interviews WHERE candidateId IN (:ids)")
+    suspend fun deleteInterviewsForCandidates(ids: List<Long>)
+
+    @Query("DELETE FROM scorecards WHERE candidateId IN (:ids)")
+    suspend fun deleteScorecardsForCandidates(ids: List<Long>)
+
+    @Query("DELETE FROM stage_history WHERE candidateId IN (:ids)")
+    suspend fun deleteHistoryForCandidates(ids: List<Long>)
+
+    @Query("DELETE FROM candidates WHERE id IN (:ids)")
+    suspend fun deleteCandidatesByIds(ids: List<Long>)
+
+    @Query("DELETE FROM candidates WHERE id = :id")
+    suspend fun deleteCandidateById(id: Long)
+
+    @Query("DELETE FROM interviews WHERE candidateId = :candidateId")
+    suspend fun deleteInterviewsForCandidate(candidateId: Long)
+
+    @Query("DELETE FROM scorecards WHERE candidateId = :candidateId")
+    suspend fun deleteScorecardsForCandidate(candidateId: Long)
+
+    @Query("DELETE FROM stage_history WHERE candidateId = :candidateId")
+    suspend fun deleteHistoryForCandidate(candidateId: Long)
 
     @Query("UPDATE candidates SET syncState = :state, organizationId = :organizationId WHERE remoteId = :remoteId")
     suspend fun markCandidateSynced(remoteId: String, organizationId: String, state: String = "SYNCED")
