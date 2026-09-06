@@ -38,7 +38,19 @@ class HireFlowRepository(private val dao: HireFlowDao) {
         val scorecards = dao.scorecardsForCandidate(current.id)
         RecruitmentRules.advanceBlockReason(current, interviews, scorecards)?.let(::error)
         val next = current.recruitmentStage.next()
-        dao.updateCandidate(current.copy(stage = next.name, updatedAt = System.currentTimeMillis(), syncState = SyncState.PENDING.name))
+        val now = System.currentTimeMillis()
+        dao.updateCandidate(
+            current.copy(
+                stage = next.name,
+                offerSentAt = if (next == RecruitmentStage.OFFER) now else current.offerSentAt,
+                updatedAt = now,
+                syncState = SyncState.PENDING.name
+            )
+        )
+        if (next == RecruitmentStage.HIRED) {
+            // Đóng hồ sơ: kết thúc các lịch còn hiệu lực, giữ lịch sử.
+            dao.cancelScheduledForCandidate(current.id, now)
+        }
         dao.insertHistory(
             StageHistoryEntity(
                 candidateId = current.id,
@@ -50,12 +62,22 @@ class HireFlowRepository(private val dao: HireFlowDao) {
         )
     }
 
-    suspend fun reject(candidate: CandidateEntity, actorId: String? = null) {
+    suspend fun reject(candidate: CandidateEntity, actorId: String? = null, reason: String? = null) {
         val current = requireNotNull(dao.candidateById(candidate.id)) { "Không tìm thấy ứng viên." }
         require(current.recruitmentStage !in setOf(RecruitmentStage.HIRED, RecruitmentStage.REJECTED)) {
             "Quy trình của ứng viên đã kết thúc."
         }
-        dao.updateCandidate(current.copy(stage = RecruitmentStage.REJECTED.name, updatedAt = System.currentTimeMillis(), syncState = SyncState.PENDING.name))
+        require(!reason.isNullOrBlank()) { "Hãy nhập lý do từ chối/đóng hồ sơ." }
+        val now = System.currentTimeMillis()
+        dao.updateCandidate(
+            current.copy(
+                stage = RecruitmentStage.REJECTED.name,
+                closeReason = reason.trim(),
+                updatedAt = now,
+                syncState = SyncState.PENDING.name
+            )
+        )
+        dao.cancelScheduledForCandidate(current.id, now)
         dao.insertHistory(
             StageHistoryEntity(
                 candidateId = current.id,
@@ -65,6 +87,42 @@ class HireFlowRepository(private val dao: HireFlowDao) {
                 actorId = actorId
             )
         )
+    }
+
+    suspend fun recordOfferResponse(candidate: CandidateEntity, accepted: Boolean, reason: String? = null, actorId: String? = null) {
+        val current = requireNotNull(dao.candidateById(candidate.id)) { "Không tìm thấy ứng viên." }
+        require(current.recruitmentStage == RecruitmentStage.OFFER) { "Chỉ ghi nhận phản hồi khi ứng viên đang ở vòng Offer." }
+        val now = System.currentTimeMillis()
+        if (accepted) {
+            dao.updateCandidate(
+                current.copy(
+                    offerResponse = OfferResponse.ACCEPTED.name,
+                    updatedAt = now,
+                    syncState = SyncState.PENDING.name
+                )
+            )
+        } else {
+            require(!reason.isNullOrBlank()) { "Hãy nhập lý do ứng viên từ chối offer." }
+            dao.updateCandidate(
+                current.copy(
+                    offerResponse = OfferResponse.DECLINED.name,
+                    stage = RecruitmentStage.REJECTED.name,
+                    closeReason = reason.trim(),
+                    updatedAt = now,
+                    syncState = SyncState.PENDING.name
+                )
+            )
+            dao.cancelScheduledForCandidate(current.id, now)
+            dao.insertHistory(
+                StageHistoryEntity(
+                    candidateId = current.id,
+                    fromStage = current.stage,
+                    toStage = RecruitmentStage.REJECTED.name,
+                    organizationId = current.organizationId,
+                    actorId = actorId
+                )
+            )
+        }
     }
 
     suspend fun addInterview(interview: InterviewEntity): Long {
@@ -81,8 +139,60 @@ class HireFlowRepository(private val dao: HireFlowDao) {
             interview.copy(
                 candidateName = candidate.name,
                 position = candidate.position,
+                status = InterviewStatus.SCHEDULED.name,
+                completed = false,
                 organizationId = candidate.organizationId,
                 remoteCandidateId = candidate.remoteId,
+                updatedAt = System.currentTimeMillis(),
+                syncState = SyncState.PENDING.name
+            )
+        )
+    }
+
+    suspend fun rescheduleInterview(interviewId: Long, newScheduledAt: Long, newDurationMinutes: Int? = null) {
+        val current = requireNotNull(dao.interviewById(interviewId)) { "Không tìm thấy lịch phỏng vấn." }
+        require(current.interviewStatus == InterviewStatus.SCHEDULED) { "Chỉ đổi được lịch chưa diễn ra." }
+        val candidate = requireNotNull(dao.candidateById(current.candidateId)) { "Không tìm thấy ứng viên." }
+        val sameScope = candidate.organizationId?.let { dao.interviewsForOrganization(it) } ?: dao.offlineInterviews()
+        RecruitmentRules.scheduleBlockReason(
+            candidate = candidate,
+            scheduledAt = newScheduledAt,
+            interviewer = current.interviewer,
+            interviews = sameScope,
+            durationMinutes = newDurationMinutes ?: current.durationMinutes,
+            excludeInterviewId = current.id
+        )?.let(::error)
+        dao.updateInterview(
+            current.copy(
+                scheduledAt = newScheduledAt,
+                durationMinutes = newDurationMinutes ?: current.durationMinutes,
+                updatedAt = System.currentTimeMillis(),
+                syncState = SyncState.PENDING.name
+            )
+        )
+    }
+
+    suspend fun cancelInterview(interviewId: Long) {
+        val current = requireNotNull(dao.interviewById(interviewId)) { "Không tìm thấy lịch phỏng vấn." }
+        require(current.interviewStatus == InterviewStatus.SCHEDULED) { "Chỉ hủy được lịch chưa diễn ra." }
+        dao.updateInterview(
+            current.copy(
+                status = InterviewStatus.CANCELLED.name,
+                completed = false,
+                updatedAt = System.currentTimeMillis(),
+                syncState = SyncState.PENDING.name
+            )
+        )
+    }
+
+    suspend fun markInterviewNoShow(interviewId: Long) {
+        val current = requireNotNull(dao.interviewById(interviewId)) { "Không tìm thấy lịch phỏng vấn." }
+        require(current.interviewStatus == InterviewStatus.SCHEDULED) { "Chỉ ghi vắng mặt cho lịch chưa xử lý." }
+        require(current.scheduledAt <= System.currentTimeMillis()) { "Buổi phỏng vấn chưa diễn ra." }
+        dao.updateInterview(
+            current.copy(
+                status = InterviewStatus.NO_SHOW.name,
+                completed = false,
                 updatedAt = System.currentTimeMillis(),
                 syncState = SyncState.PENDING.name
             )
@@ -96,6 +206,7 @@ class HireFlowRepository(private val dao: HireFlowDao) {
         dao.updateInterview(
             interview.copy(
                 completed = completed,
+                status = if (completed) InterviewStatus.COMPLETED.name else InterviewStatus.SCHEDULED.name,
                 updatedAt = System.currentTimeMillis(),
                 syncState = SyncState.PENDING.name
             )
@@ -104,12 +215,15 @@ class HireFlowRepository(private val dao: HireFlowDao) {
 
     suspend fun saveScorecard(scorecard: ScorecardEntity, evaluatorId: String?) {
         val candidate = requireNotNull(dao.candidateById(scorecard.candidateId)) { "Không tìm thấy ứng viên." }
-        RecruitmentRules.reviewBlockReason(candidate, dao.interviewsForCandidate(candidate.id))?.let(::error)
-        val existing = dao.scorecardForEvaluator(candidate.id, evaluatorId)
+        RecruitmentRules.reviewBlockReason(candidate, dao.interviewsForCandidate(candidate.id), scorecard.interviewId)?.let(::error)
+        // Phiếu định danh theo bộ ba ứng viên/người đánh giá/buổi; phiếu cũ (interviewId null) giữ riêng.
+        val existing = dao.scorecardForSession(candidate.id, evaluatorId, scorecard.interviewId)
+        val remoteInterviewId = scorecard.interviewId?.let { dao.interviewById(it)?.remoteId }
         val saved = scorecard.copy(
             id = existing?.id ?: 0,
             remoteId = existing?.remoteId ?: scorecard.remoteId,
             remoteCandidateId = candidate.remoteId,
+            remoteInterviewId = remoteInterviewId ?: existing?.remoteInterviewId,
             organizationId = candidate.organizationId,
             evaluatorId = evaluatorId,
             createdAt = existing?.createdAt ?: scorecard.createdAt,
@@ -143,6 +257,7 @@ class HireFlowRepository(private val dao: HireFlowDao) {
     internal suspend fun pendingTasks(organizationId: String) = dao.pendingTasks(organizationId)
     internal suspend fun candidateByLocalId(id: Long) = dao.candidateById(id)
     internal suspend fun candidateByRemoteId(id: String) = dao.candidateByRemoteId(id)
+    internal suspend fun interviewByLocalId(id: Long) = dao.interviewById(id)
     internal suspend fun interviewByRemoteId(id: String) = dao.interviewByRemoteId(id)
     internal suspend fun scorecardByRemoteId(id: String) = dao.scorecardByRemoteId(id)
     internal suspend fun historyByRemoteId(id: String) = dao.historyByRemoteId(id)

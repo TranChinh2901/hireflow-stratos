@@ -266,21 +266,33 @@ class HireFlowViewModel(application: Application) : AndroidViewModel(application
 
     fun selectCandidate(id: Long) { selectedCandidateId.value = id }
 
-    fun addCandidate(candidate: CandidateEntity, onAdded: (Long) -> Unit = {}) {
+    fun addCandidate(
+        candidate: CandidateEntity,
+        onAdded: (Long) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
         viewModelScope.launch {
             val organizationId = _accountState.value.profile?.organizationId
             if (!_accountState.value.offlineMode && organizationId == null) return@launch
             runCatching { repository.addCandidate(candidate.copy(organizationId = organizationId)) }
                 .onSuccess { onAdded(it); requestSync() }
-                .onFailure { _notice.value = it.message ?: "Không thể thêm ứng viên." }
+                .onFailure {
+                    val message = it.message ?: "Không thể thêm ứng viên."
+                    _notice.value = message
+                    onError(message)
+                }
         }
     }
 
-    fun updateCandidate(candidate: CandidateEntity) {
+    fun updateCandidate(candidate: CandidateEntity, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
             runCatching { repository.updateCandidate(candidate) }
-                .onSuccess { requestSync() }
-                .onFailure { _notice.value = it.message ?: "Không thể cập nhật ứng viên." }
+                .onSuccess { _notice.value = "Đã cập nhật hồ sơ."; onDone(true); requestSync() }
+                .onFailure {
+                    val message = it.message ?: "Không thể cập nhật ứng viên."
+                    _notice.value = message
+                    onDone(false)
+                }
         }
     }
 
@@ -349,19 +361,78 @@ class HireFlowViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun moveNext(candidate: CandidateEntity) {
+    fun moveNext(candidate: CandidateEntity, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
             runCatching { repository.moveNext(candidate, _accountState.value.profile?.id) }
-                .onSuccess { requestSync() }
-                .onFailure { _notice.value = it.message ?: "Không thể chuyển vòng ứng viên." }
+                .onSuccess {
+                    val next = repository.candidateByLocalId(candidate.id)
+                    _notice.value = if (next != null) "Đã chuyển ${next.name} sang ${next.recruitmentStage.label}." else "Đã chuyển vòng ứng viên."
+                    onDone(true)
+                    requestSync()
+                }
+                .onFailure {
+                    _notice.value = it.message ?: "Không thể chuyển vòng ứng viên."
+                    onDone(false)
+                }
         }
     }
 
-    fun reject(candidate: CandidateEntity) {
+    fun reject(candidate: CandidateEntity, reason: String, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            runCatching { repository.reject(candidate, _accountState.value.profile?.id) }
-                .onSuccess { requestSync() }
-                .onFailure { _notice.value = it.message ?: "Không thể từ chối ứng viên." }
+            runCatching { repository.reject(candidate, _accountState.value.profile?.id, reason) }
+                .onSuccess { _notice.value = "Đã từ chối ${candidate.name}."; onDone(true); requestSync() }
+                .onFailure {
+                    _notice.value = it.message ?: "Không thể từ chối ứng viên."
+                    onDone(false)
+                }
+        }
+    }
+
+    fun recordOfferResponse(candidate: CandidateEntity, accepted: Boolean, reason: String? = null, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            runCatching { repository.recordOfferResponse(candidate, accepted, reason, _accountState.value.profile?.id) }
+                .onSuccess {
+                    _notice.value = if (accepted) "Đã ghi nhận ${candidate.name} đồng ý offer." else "Đã ghi nhận ${candidate.name} từ chối offer."
+                    onDone(true)
+                    requestSync()
+                }
+                .onFailure {
+                    _notice.value = it.message ?: "Không thể ghi nhận phản hồi offer."
+                    onDone(false)
+                }
+        }
+    }
+
+    fun rescheduleInterview(interviewId: Long, newScheduledAt: Long, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            runCatching { repository.rescheduleInterview(interviewId, newScheduledAt) }
+                .onSuccess { _notice.value = "Đã đổi lịch phỏng vấn."; onDone(true); requestSync() }
+                .onFailure {
+                    _notice.value = it.message ?: "Không thể đổi lịch phỏng vấn."
+                    onDone(false)
+                }
+        }
+    }
+
+    fun cancelInterview(interview: InterviewEntity, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            runCatching { repository.cancelInterview(interview.id) }
+                .onSuccess { _notice.value = "Đã hủy lịch phỏng vấn."; onDone(true); requestSync() }
+                .onFailure {
+                    _notice.value = it.message ?: "Không thể hủy lịch phỏng vấn."
+                    onDone(false)
+                }
+        }
+    }
+
+    fun markInterviewNoShow(interview: InterviewEntity, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            runCatching { repository.markInterviewNoShow(interview.id) }
+                .onSuccess { _notice.value = "Đã ghi nhận vắng mặt."; onDone(true); requestSync() }
+                .onFailure {
+                    _notice.value = it.message ?: "Không thể ghi nhận vắng mặt."
+                    onDone(false)
+                }
         }
     }
 
@@ -426,30 +497,44 @@ class HireFlowViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun addInterview(interview: InterviewEntity, onAdded: (Long) -> Unit) {
+    fun addInterview(
+        interview: InterviewEntity,
+        onAdded: (Long) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
         viewModelScope.launch {
             runCatching {
                 repository.addInterview(interview.copy(interviewerUserId = _accountState.value.profile?.id))
             }
                 .onSuccess { onAdded(it); requestSync() }
-                .onFailure { _notice.value = it.message ?: "Không thể tạo lịch phỏng vấn." }
+                .onFailure {
+                    val message = it.message ?: "Không thể tạo lịch phỏng vấn."
+                    _notice.value = message
+                    onError(message)
+                }
         }
     }
 
-    fun saveScorecard(scorecard: ScorecardEntity) {
+    fun saveScorecard(scorecard: ScorecardEntity, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
             val evaluatorId = _accountState.value.profile?.id
             runCatching { repository.saveScorecard(scorecard, evaluatorId) }
-                .onSuccess { requestSync() }
-                .onFailure { _notice.value = it.message ?: "Không thể lưu phiếu đánh giá." }
+                .onSuccess { _notice.value = "Đã lưu phiếu đánh giá."; onDone(true); requestSync() }
+                .onFailure {
+                    _notice.value = it.message ?: "Không thể lưu phiếu đánh giá."
+                    onDone(false)
+                }
         }
     }
 
-    fun setInterviewCompleted(interview: InterviewEntity, completed: Boolean) {
+    fun setInterviewCompleted(interview: InterviewEntity, completed: Boolean, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
             runCatching { repository.setInterviewCompleted(interview, completed) }
-                .onSuccess { requestSync() }
-                .onFailure { _notice.value = it.message ?: "Không thể cập nhật lịch phỏng vấn." }
+                .onSuccess { _notice.value = "Đã cập nhật lịch phỏng vấn."; onDone(true); requestSync() }
+                .onFailure {
+                    _notice.value = it.message ?: "Không thể cập nhật lịch phỏng vấn."
+                    onDone(false)
+                }
         }
     }
 

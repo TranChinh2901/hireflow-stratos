@@ -60,6 +60,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -76,7 +77,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.hireflow.app.data.CandidateEntity
+import com.hireflow.app.data.InterviewEntity
 import com.hireflow.app.data.RecruitmentStage
+import com.hireflow.app.data.ScorecardEntity
+import com.hireflow.app.domain.WorkQueue
 import com.hireflow.app.ui.components.ScreenHeader
 import com.hireflow.app.ui.components.CandidateRow
 import com.hireflow.app.ui.components.EmptyState
@@ -84,23 +88,57 @@ import com.hireflow.app.ui.components.EmptyState
 @Composable
 fun CandidatesScreen(
     candidates: List<CandidateEntity>,
-    onAddCandidate: (CandidateEntity, (Long) -> Unit) -> Unit,
+    interviews: List<InterviewEntity> = emptyList(),
+    scorecards: List<ScorecardEntity> = emptyList(),
+    onAddCandidate: (CandidateEntity, (Long) -> Unit, (String) -> Unit) -> Unit,
     canManage: Boolean,
     onOpenCandidate: (Long) -> Unit,
     onDeleteRejected: (List<CandidateEntity>) -> Unit = {},
-    onDeleteCandidate: (CandidateEntity) -> Unit = {}
+    onDeleteCandidate: (CandidateEntity) -> Unit = {},
+    initialStage: String? = null,
+    initialNeed: String? = null
 ) {
     var showFilters by rememberSaveable { mutableStateOf(false) }
     var newestFirst by rememberSaveable { mutableStateOf(true) }
     var query by rememberSaveable { mutableStateOf("") }
     var selectedStage by rememberSaveable { mutableStateOf<String?>(null) }
+    var activeNeed by rememberSaveable { mutableStateOf<String?>(null) }
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
     var showDeleteRejectedDialog by rememberSaveable { mutableStateOf(false) }
     var candidateToDelete by remember { mutableStateOf<CandidateEntity?>(null) }
+    LaunchedEffect(initialStage, initialNeed) {
+        // Chỉ áp dụng args khác null để không xóa bộ lọc user đang giữ khi quay lại.
+        initialStage?.let { stage ->
+            if (RecruitmentStage.entries.any { it.name == stage }) selectedStage = stage
+        }
+        initialNeed?.let { need ->
+            if (need in setOf("review", "screening", "offer", "decision", "unscheduled")) {
+                activeNeed = need
+                showFilters = true
+            }
+        }
+    }
+    val needIds: Set<Long>? = when (activeNeed) {
+        "review" -> WorkQueue.missingReviews(candidates, interviews, scorecards).map { it.id }.toSet()
+        "screening" -> WorkQueue.screeningQueue(candidates).map { it.id }.toSet()
+        "offer" -> WorkQueue.offerQueue(candidates).map { it.id }.toSet()
+        "decision" -> WorkQueue.decisionQueue(candidates).map { it.id }.toSet()
+        "unscheduled" -> WorkQueue.unscheduled(candidates, interviews).map { it.id }.toSet()
+        else -> null
+    }
+    val needLabel = when (activeNeed) {
+        "review" -> "Chờ đánh giá"
+        "screening" -> "Đang sàng lọc"
+        "offer" -> "Chờ phản hồi offer"
+        "decision" -> "Chờ quyết định"
+        "unscheduled" -> "Chưa đặt lịch"
+        else -> null
+    }
     val rejectedCount = candidates.count { it.recruitmentStage == RecruitmentStage.REJECTED }
     val filtered = candidates.filter { candidate ->
         (query.isBlank() || candidate.name.contains(query, true) || candidate.position.contains(query, true) || candidate.skills.contains(query, true)) &&
-            (selectedStage == null || candidate.stage == selectedStage)
+            (selectedStage == null || candidate.stage == selectedStage) &&
+            (needIds == null || candidate.id in needIds)
     }.let { list -> if (newestFirst) list.sortedByDescending { it.createdAt } else list.sortedBy { it.name } }
 
     Scaffold(
@@ -141,6 +179,16 @@ fun CandidatesScreen(
                                 Icon(Icons.Rounded.FilterList, "Bộ lọc ứng viên", tint = if (selectedStage != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
                             }
                         }
+                    }
+                }
+                if (needLabel != null) item {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        FilterChip(
+                            selected = true,
+                            onClick = { activeNeed = null },
+                            label = { Text("Lọc: $needLabel") },
+                            trailingIcon = { Icon(Icons.Rounded.Close, "Bỏ lọc", modifier = Modifier.size(16.dp)) }
+                        )
                     }
                 }
                 if (showFilters) item {
@@ -197,9 +245,15 @@ fun CandidatesScreen(
 
     if (showAddDialog) AddCandidateDialog(
         onDismiss = { showAddDialog = false },
-        onSave = { candidate ->
-            onAddCandidate(candidate) { id -> onOpenCandidate(id) }
-            showAddDialog = false
+        onSave = { candidate, onError ->
+            onAddCandidate(
+                candidate,
+                { id ->
+                    showAddDialog = false
+                    onOpenCandidate(id)
+                },
+                { message -> onError(message) }
+            )
         }
     )
 
@@ -255,18 +309,21 @@ private val skillOptions = listOf(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AddCandidateDialog(onDismiss: () -> Unit, onSave: (CandidateEntity) -> Unit) {
+private fun AddCandidateDialog(onDismiss: () -> Unit, onSave: (CandidateEntity, (String) -> Unit) -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
     var position by rememberSaveable { mutableStateOf("") }
     var email by rememberSaveable { mutableStateOf("") }
     var phone by rememberSaveable { mutableStateOf("") }
     var selectedExperience by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedSkills by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var saving by rememberSaveable { mutableStateOf(false) }
+    var saveError by rememberSaveable { mutableStateOf<String?>(null) }
     val experience = experienceOptions.firstOrNull { it.key == selectedExperience }
-    val valid = name.isNotBlank() && position.isNotBlank() && experience != null && selectedSkills.isNotEmpty()
+    // Chỉ bắt buộc tên và vị trí; kinh nghiệm/kỹ năng bổ sung sau.
+    val valid = name.isNotBlank() && position.isNotBlank()
 
     Dialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!saving) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
@@ -311,7 +368,7 @@ private fun AddCandidateDialog(onDismiss: () -> Unit, onSave: (CandidateEntity) 
                         CompactField(phone, { phone = it }, "Điện thoại", Icons.Rounded.Phone, Modifier.weight(1f), KeyboardType.Phone)
                     }
 
-                    FormSectionTitle("Kinh nghiệm *", "Chọn cấp độ phù hợp")
+                    FormSectionTitle("Kinh nghiệm", "Không bắt buộc, bổ sung sau")
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         experienceOptions.forEach { option ->
                             FilterChip(
@@ -330,7 +387,7 @@ private fun AddCandidateDialog(onDismiss: () -> Unit, onSave: (CandidateEntity) 
                         }
                     }
 
-                    FormSectionTitle("Kỹ năng *", "Chọn một hoặc nhiều kỹ năng")
+                    FormSectionTitle("Kỹ năng", "Không bắt buộc, chọn sau cũng được")
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         skillOptions.forEach { skill ->
                             val selected = skill in selectedSkills
@@ -354,14 +411,24 @@ private fun AddCandidateDialog(onDismiss: () -> Unit, onSave: (CandidateEntity) 
                 }
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .65f))
+                if (saveError != null) {
+                    Text(
+                        saveError!!,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp)
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp)) { Text("Hủy") }
+                    TextButton(onClick = { if (!saving) onDismiss() }, modifier = Modifier.weight(1f).height(44.dp)) { Text("Hủy") }
                     Button(
                         onClick = {
+                            saving = true
+                            saveError = null
                             onSave(
                                 CandidateEntity(
                                     name = name.trim(),
@@ -371,15 +438,18 @@ private fun AddCandidateDialog(onDismiss: () -> Unit, onSave: (CandidateEntity) 
                                     experienceYears = experience?.years ?: 0,
                                     skills = selectedSkills.joinToString(", ")
                                 )
-                            )
+                            ) { message ->
+                                saving = false
+                                saveError = message
+                            }
                         },
-                        enabled = valid,
+                        enabled = valid && !saving,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1.6f).height(44.dp)
                     ) {
                         Icon(Icons.Rounded.Add, null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.size(6.dp))
-                        Text("Thêm ứng viên", fontWeight = FontWeight.Bold)
+                        Text(if (saving) "Đang lưu..." else "Thêm ứng viên", fontWeight = FontWeight.Bold)
                     }
                 }
             }

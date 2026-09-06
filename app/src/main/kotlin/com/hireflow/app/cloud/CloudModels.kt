@@ -37,6 +37,9 @@ data class CandidateDto(
     val notes: String,
     @SerialName("cv_path") val cvPath: String? = null,
     @SerialName("cv_name") val cvName: String? = null,
+    @SerialName("close_reason") val closeReason: String? = null,
+    @SerialName("offer_sent_at") val offerSentAt: String? = null,
+    @SerialName("offer_response") val offerResponse: String? = null,
     @SerialName("updated_at") val updatedAt: String
 )
 
@@ -52,7 +55,8 @@ data class InterviewDto(
     @SerialName("interviewer_id") val interviewerId: String? = null,
     val round: String,
     val checklist: List<String>,
-    val completed: Boolean,
+    val completed: Boolean = false,
+    val status: String = "scheduled",
     @SerialName("updated_at") val updatedAt: String
 )
 
@@ -61,6 +65,7 @@ data class ScorecardDto(
     val id: String,
     @SerialName("organization_id") val organizationId: String,
     @SerialName("candidate_id") val candidateId: String,
+    @SerialName("interview_id") val interviewId: String? = null,
     @SerialName("evaluator_id") val evaluatorId: String,
     val technical: Int,
     val communication: Int,

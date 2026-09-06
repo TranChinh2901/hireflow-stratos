@@ -99,6 +99,12 @@ interface HireFlowDao {
     @Query("SELECT * FROM interviews WHERE remoteId = :remoteId LIMIT 1")
     suspend fun interviewByRemoteId(remoteId: String): InterviewEntity?
 
+    @Query("SELECT * FROM interviews WHERE id = :id LIMIT 1")
+    suspend fun interviewById(id: Long): InterviewEntity?
+
+    @Query("UPDATE interviews SET status = 'CANCELLED', completed = 0, updatedAt = :updatedAt, syncState = 'PENDING' WHERE candidateId = :candidateId AND status = 'SCHEDULED'")
+    suspend fun cancelScheduledForCandidate(candidateId: Long, updatedAt: Long): Int
+
     @Query("SELECT COUNT(*) FROM interviews")
     suspend fun interviewCount(): Int
 
@@ -124,6 +130,18 @@ interface HireFlowDao {
         ORDER BY createdAt DESC LIMIT 1
     """)
     suspend fun scorecardForEvaluator(candidateId: Long, evaluatorId: String?): ScorecardEntity?
+
+    @Query("""
+        SELECT * FROM scorecards
+        WHERE candidateId = :candidateId
+          AND ((:evaluatorId IS NULL AND evaluatorId IS NULL) OR evaluatorId = :evaluatorId)
+          AND ((:interviewId IS NULL AND interviewId IS NULL) OR interviewId = :interviewId)
+        ORDER BY createdAt DESC LIMIT 1
+    """)
+    suspend fun scorecardForSession(candidateId: Long, evaluatorId: String?, interviewId: Long?): ScorecardEntity?
+
+    @Query("SELECT * FROM scorecards WHERE interviewId = :interviewId ORDER BY createdAt DESC")
+    suspend fun scorecardsForInterview(interviewId: Long): List<ScorecardEntity>
 
     @Query("SELECT * FROM scorecards WHERE remoteId = :remoteId LIMIT 1")
     suspend fun scorecardByRemoteId(remoteId: String): ScorecardEntity?

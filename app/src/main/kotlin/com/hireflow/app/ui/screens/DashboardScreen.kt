@@ -20,8 +20,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CalendarMonth
-import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.MarkEmailUnread
 import androidx.compose.material.icons.rounded.NotificationsNone
@@ -39,7 +37,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
@@ -49,18 +46,16 @@ import com.hireflow.app.ui.components.ScreenHeader
 import com.hireflow.app.ui.components.HeaderAction
 import com.hireflow.app.HireFlowUiState
 import com.hireflow.app.AccountUiState
-import com.hireflow.app.data.HrTaskEntity
 import com.hireflow.app.data.RecruitmentStage
+import com.hireflow.app.domain.WorkKind
+import com.hireflow.app.domain.WorkQueue
 import com.hireflow.app.ui.components.InitialAvatar
 import com.hireflow.app.ui.components.SectionTitle
 import com.hireflow.app.ui.theme.Azure
 import com.hireflow.app.ui.theme.Purple
 import com.hireflow.app.ui.theme.Success
 import com.hireflow.app.ui.theme.Warning
-import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 
 private data class Metric(val value: Int, val label: String, val detail: String, val icon: ImageVector, val color: Color, val onClick: () -> Unit)
 
@@ -68,12 +63,14 @@ private data class Metric(val value: Int, val label: String, val detail: String,
 fun DashboardScreen(
     state: HireFlowUiState,
     account: AccountUiState,
-    onToggleTask: (HrTaskEntity) -> Unit,
     onToggleTheme: (Boolean) -> Unit,
     onSync: () -> Unit,
     onOpenProfile: () -> Unit,
     onOpenInterviews: () -> Unit,
-    onOpenCandidates: () -> Unit
+    onOpenCandidate: (Long) -> Unit,
+    onOpenInterview: (Long) -> Unit,
+    onOpenReview: (candidateId: Long, interviewId: Long?) -> Unit,
+    onOpenCandidatesFiltered: (stage: String?, need: String?) -> Unit
 ) {
     val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
     val greeting = when (hour) {
@@ -82,17 +79,22 @@ fun DashboardScreen(
         in 14..17 -> "Chào buổi chiều"
         else -> "Chào buổi tối"
     }
-    val todayTasks = state.tasks.filter { isToday(it.dueAt) }
-    val pendingReviews = state.candidates.count { candidate ->
-        candidate.recruitmentStage == RecruitmentStage.INTERVIEW &&
-            state.interviews.any { it.candidateId == candidate.id && it.completed } &&
-            state.scorecards.none { it.candidateId == candidate.id }
-    }
+    val now = System.currentTimeMillis()
+    val workItems = WorkQueue.todayWorkItems(state.interviews, now)
+    val pendingReviews = WorkQueue.missingReviews(state.candidates, state.interviews, state.scorecards).size
     val metrics = listOf(
-        Metric(state.interviews.count { isToday(it.scheduledAt) }, "Phỏng vấn", "Lịch hẹn hôm nay", Icons.Rounded.CalendarMonth, Azure, onOpenInterviews),
-        Metric(pendingReviews, "Chờ đánh giá", "Ứng viên cần đánh giá", Icons.Rounded.Groups, Success, onOpenCandidates),
-        Metric(state.candidates.count { it.recruitmentStage == RecruitmentStage.SCREENING }, "Đang sàng lọc", "Ứng viên cần review CV", Icons.Rounded.MarkEmailUnread, Warning, onOpenCandidates),
-        Metric(state.candidates.count { it.recruitmentStage == RecruitmentStage.OFFER }, "Chờ phản hồi offer", "Ứng viên đã nhận offer", Icons.Rounded.RateReview, Purple, onOpenCandidates)
+        Metric(state.interviews.count { WorkQueue.isSameDay(it.scheduledAt, now) }, "Phỏng vấn", "Lịch hẹn hôm nay", Icons.Rounded.CalendarMonth, Azure) {
+            onOpenInterviews()
+        },
+        Metric(pendingReviews, "Chờ đánh giá", "Ứng viên cần đánh giá", Icons.Rounded.Groups, Success) {
+            onOpenCandidatesFiltered(null, "review")
+        },
+        Metric(state.candidates.count { it.recruitmentStage == RecruitmentStage.SCREENING }, "Đang sàng lọc", "Ứng viên cần review CV", Icons.Rounded.MarkEmailUnread, Warning) {
+            onOpenCandidatesFiltered(RecruitmentStage.SCREENING.name, null)
+        },
+        Metric(state.candidates.count { it.recruitmentStage == RecruitmentStage.OFFER }, "Chờ phản hồi offer", "Ứng viên đã nhận offer", Icons.Rounded.RateReview, Purple) {
+            onOpenCandidatesFiltered(RecruitmentStage.OFFER.name, null)
+        }
     )
 
     Column(Modifier.fillMaxSize()) {
@@ -135,11 +137,24 @@ fun DashboardScreen(
                 Spacer(Modifier.height(2.dp))
                 SectionTitle("Công việc hôm nay", "Xem lịch", onOpenInterviews)
             }
-            if (todayTasks.isEmpty()) {
+            if (workItems.isEmpty()) {
                 item { Text("Không có công việc cần xử lý.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             } else {
-                items(todayTasks, key = { it.id }) { task ->
-                    TaskRow(task, onClick = { onToggleTask(task) })
+                items(workItems, key = { it.key }) { item ->
+                    WorkRow(
+                        title = item.title,
+                        subtitle = item.subtitle,
+                        onClick = {
+                            when {
+                                item.kind == WorkKind.REVIEW ->
+                                    item.candidateId?.let { onOpenReview(it, item.interviewId) }
+                                item.interviewId != null ->
+                                    onOpenInterview(item.interviewId)
+                                item.candidateId != null ->
+                                    onOpenCandidate(item.candidateId)
+                            }
+                        }
+                    )
                 }
             }
         }
@@ -173,13 +188,7 @@ private fun MetricCard(metric: Metric, modifier: Modifier) {
 }
 
 @Composable
-private fun TaskRow(task: HrTaskEntity, onClick: () -> Unit) {
-    val icon = when (task.type) {
-        "interview" -> Icons.Rounded.CalendarMonth
-        "review" -> Icons.Rounded.RateReview
-        "cv" -> Icons.Rounded.Description
-        else -> Icons.Rounded.Schedule
-    }
+private fun WorkRow(title: String, subtitle: String, onClick: () -> Unit) {
     Card(
         onClick = onClick,
         shape = RoundedCornerShape(9.dp),
@@ -190,29 +199,16 @@ private fun TaskRow(task: HrTaskEntity, onClick: () -> Unit) {
     ) {
         Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
-                Modifier.size(24.dp).clip(CircleShape).then(
-                    if (task.completed) Modifier.background(MaterialTheme.colorScheme.primary)
-                    else Modifier.background(MaterialTheme.colorScheme.primaryContainer)
-                ),
+                Modifier.size(24.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(if (task.completed) Icons.Rounded.Check else icon, null, modifier = Modifier.size(17.dp), tint = if (task.completed) Color.White else MaterialTheme.colorScheme.primary)
+                Icon(Icons.Rounded.Schedule, null, modifier = Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
             }
             Spacer(Modifier.size(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(
-                    task.title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    textDecoration = if (task.completed) TextDecoration.LineThrough else TextDecoration.None,
-                    color = if (task.completed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
-                )
-                Text(task.subtitle, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+                Text(subtitle, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
-}
-
-private fun isToday(time: Long): Boolean {
-    val formatter = SimpleDateFormat("yyyyMMdd", Locale.US)
-    return formatter.format(Date(time)) == formatter.format(Date())
 }

@@ -17,8 +17,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.HorizontalDivider
-import com.hireflow.app.ui.components.SectionTitle
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -29,8 +27,11 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -41,6 +42,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -70,36 +74,43 @@ private enum class InterviewTab(val label: String) { TODAY("Hôm nay"), UPCOMING
 fun InterviewsScreen(
     candidates: List<CandidateEntity>,
     interviews: List<InterviewEntity>,
-    onAddInterview: (InterviewEntity, (Long) -> Unit) -> Unit,
-    onSetCompleted: (InterviewEntity, Boolean) -> Unit,
+    onAddInterview: (InterviewEntity, (Long) -> Unit, (String) -> Unit) -> Unit,
     notificationsEnabled: Boolean,
     canSchedule: Boolean,
     currentInterviewer: String,
-    onOpenCandidate: (Long) -> Unit,
-    onReview: (Long) -> Unit
+    initialCandidateId: Long? = null,
+    openDialog: Boolean = false,
+    onOpenCandidate: (Long) -> Unit = {},
+    onOpenInterview: (Long) -> Unit = {},
+    onReview: (Long, Long?) -> Unit = { _, _ -> }
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(InterviewTab.TODAY.name) }
-    var showDialog by rememberSaveable { mutableStateOf(false) }
-    var selectedInterviewId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var showDialog by rememberSaveable(openDialog) { mutableStateOf(openDialog && canSchedule) }
+    var dialogCandidateId by rememberSaveable(openDialog, initialCandidateId) {
+        mutableStateOf(initialCandidateId)
+    }
+    var saveError by rememberSaveable { mutableStateOf<String?>(null) }
+    var saving by rememberSaveable { mutableStateOf(false) }
     val navigate = LocalHeaderNavigation.current
     val context = LocalContext.current
-    val now = System.currentTimeMillis()
     val schedulableCandidates = candidates.filter { it.recruitmentStage == RecruitmentStage.INTERVIEW }
     val filtered = interviews.filter { interview ->
         when (InterviewTab.valueOf(selectedTab)) {
-            InterviewTab.TODAY -> isSameDay(interview.scheduledAt, now)
+            InterviewTab.TODAY -> isSameDay(interview.scheduledAt, now())
             InterviewTab.UPCOMING -> interview.scheduledAt > endOfToday()
             InterviewTab.PAST -> interview.scheduledAt < startOfToday()
         }
     }
 
-    val selectedInterview = filtered.firstOrNull { it.id == selectedInterviewId } ?: filtered.minByOrNull { it.scheduledAt }
-
     Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             ScreenHeader("Lịch phỏng vấn", onBack = { navigate("dashboard") }, action = {
                 HeaderAction(Icons.Rounded.CalendarMonth, "Mở lịch phỏng vấn") {
-                    if (canSchedule) showDialog = true else selectedTab = InterviewTab.TODAY.name
+                    if (canSchedule) {
+                        dialogCandidateId = initialCandidateId
+                        saveError = null
+                        showDialog = true
+                    } else selectedTab = InterviewTab.TODAY.name
                 }
             })
             Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -125,49 +136,19 @@ fun InterviewsScreen(
                     item { EmptyState(Icons.Rounded.CalendarMonth, "Chưa có lịch phỏng vấn", "Nhấn + để tạo lịch mới cho ứng viên.") }
                 } else {
                     items(filtered.sortedBy { it.scheduledAt }, key = { it.id }) { interview ->
-                        InterviewCard(interview, interview.id == selectedInterview?.id) { selectedInterviewId = interview.id }
+                        InterviewCard(interview, selected = false) { onOpenInterview(interview.id) }
                     }
                 }
                 if (canSchedule) item {
                     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        FilledTonalButton(shape = RoundedCornerShape(9.dp), onClick = { showDialog = true }) {
+                        FilledTonalButton(shape = RoundedCornerShape(9.dp), onClick = {
+                            dialogCandidateId = initialCandidateId
+                            saveError = null
+                            showDialog = true
+                        }) {
                             Icon(Icons.Rounded.Add, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.size(6.dp))
                             Text("Thêm lịch phỏng vấn")
-                        }
-                    }
-                }
-                selectedInterview?.let { selected ->
-                    item {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                        Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            SectionTitle("Chi tiết phỏng vấn")
-                            InterviewDetailLine("Ứng viên", selected.candidateName)
-                            InterviewDetailLine("Vị trí", selected.position)
-                            InterviewDetailLine("Ngày", SimpleDateFormat("dd/MM/yyyy", Locale.US).format(Date(selected.scheduledAt)))
-                            InterviewDetailLine("Thời gian", SimpleDateFormat("HH:mm", Locale.US).format(Date(selected.scheduledAt)) + " · ${selected.durationMinutes} phút")
-                            InterviewDetailLine("Hình thức", selected.format)
-                            InterviewDetailLine("Interviewer", selected.interviewer)
-                            InterviewDetailLine("Nhắc trước", if (notificationsEnabled) "15 phút" else "Đang tắt")
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(shape = RoundedCornerShape(9.dp), onClick = { onOpenCandidate(selected.candidateId) }, modifier = Modifier.weight(1f)) { Text("Xem hồ sơ") }
-                                Button(
-                                    shape = RoundedCornerShape(9.dp),
-                                    onClick = { onReview(selected.candidateId) },
-                                    enabled = selected.completed,
-                                    modifier = Modifier.weight(1f)
-                                ) { Text("Đánh giá") }
-                            }
-                            if (canSchedule) {
-                                FilledTonalButton(
-                                    shape = RoundedCornerShape(9.dp),
-                                    onClick = { onSetCompleted(selected, !selected.completed) },
-                                    enabled = selected.completed || selected.scheduledAt <= now,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(if (selected.completed) "Đánh dấu chưa hoàn thành" else "Hoàn thành phỏng vấn")
-                                }
-                            }
                         }
                     }
                 }
@@ -179,14 +160,29 @@ fun InterviewsScreen(
         candidates = schedulableCandidates,
         interviews = interviews,
         defaultInterviewer = currentInterviewer,
-        onDismiss = { showDialog = false },
+        initialCandidateId = dialogCandidateId,
+        requestedCandidate = candidates.firstOrNull { it.id == dialogCandidateId },
+        saving = saving,
+        saveError = saveError,
+        onDismiss = { if (!saving) showDialog = false },
         onSave = { interview ->
-            onAddInterview(interview) { id ->
-                if (notificationsEnabled) {
-                    scheduleInterviewReminder(context, id, interview.candidateName, interview.position, interview.scheduledAt)
+            saving = true
+            saveError = null
+            onAddInterview(
+                interview,
+                { id ->
+                    saving = false
+                    showDialog = false
+                    if (notificationsEnabled) {
+                        scheduleInterviewReminder(context, id, interview.candidateName, interview.position, interview.scheduledAt)
+                    }
+                    onOpenInterview(id)
+                },
+                { message ->
+                    saving = false
+                    saveError = message
                 }
-            }
-            showDialog = false
+            )
         }
     )
 }
@@ -222,62 +218,93 @@ private fun InterviewCard(interview: InterviewEntity, selected: Boolean, onSelec
                 }
                 Text(SimpleDateFormat("dd/MM/yyyy", Locale.forLanguageTag("vi-VN")).format(Date(interview.scheduledAt)) + " · " + interview.round, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("Interviewer: ${interview.interviewer}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (interview.completed) {
-                    Text("Đã hoàn thành", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                when (interview.interviewStatus) {
+                    com.hireflow.app.data.InterviewStatus.COMPLETED ->
+                        Text("Đã hoàn thành", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    com.hireflow.app.data.InterviewStatus.CANCELLED ->
+                        Text("Đã hủy", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    com.hireflow.app.data.InterviewStatus.NO_SHOW ->
+                        Text("Vắng mặt", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+                    else -> Unit
                 }
             }
         }
     }
 }
 
-@Composable
-private fun InterviewDetailLine(label: String, value: String) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(label, modifier = Modifier.weight(.8f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, modifier = Modifier.weight(1.2f), style = MaterialTheme.typography.bodyMedium)
-    }
-}
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ScheduleInterviewDialog(
     candidates: List<CandidateEntity>,
     interviews: List<InterviewEntity>,
     defaultInterviewer: String,
+    initialCandidateId: Long? = null,
+    requestedCandidate: CandidateEntity? = null,
+    saving: Boolean = false,
+    saveError: String? = null,
     onDismiss: () -> Unit,
     onSave: (InterviewEntity) -> Unit
 ) {
-    var selectedId by rememberSaveable { mutableStateOf(candidates.firstOrNull()?.id) }
+    var selectedId by rememberSaveable(initialCandidateId) {
+        mutableStateOf(initialCandidateId?.takeIf { id -> candidates.any { it.id == id } } ?: candidates.firstOrNull()?.id)
+    }
     var expanded by rememberSaveable { mutableStateOf(false) }
-    var date by rememberSaveable { mutableStateOf(SimpleDateFormat("dd/MM/yyyy", Locale.US).format(Date(System.currentTimeMillis() + 86_400_000))) }
-    var time by rememberSaveable { mutableStateOf("09:30") }
+    var showDatePicker by rememberSaveable { mutableStateOf(false) }
+    var showTimePicker by rememberSaveable { mutableStateOf(false) }
+    var dateMillis by rememberSaveable { mutableStateOf(System.currentTimeMillis() + 86_400_000) }
+    var hour by rememberSaveable { mutableStateOf(9) }
+    var minute by rememberSaveable { mutableStateOf(30) }
     var format by rememberSaveable { mutableStateOf("Online") }
     var interviewer by rememberSaveable { mutableStateOf(defaultInterviewer) }
     var round by rememberSaveable { mutableStateOf("Vòng 1: HR") }
     var checklist by rememberSaveable { mutableStateOf("Giới thiệu bản thân, Kinh nghiệm liên quan, Tình huống thực tế") }
     val candidate = candidates.firstOrNull { it.id == selectedId }
-    val scheduledAt = parseDateTime(date, time)
+    val lockedCandidate = initialCandidateId != null && candidates.any { it.id == initialCandidateId }
+    // Giữ nguyên người được yêu cầu: ID không còn trong nhóm Phỏng vấn thì báo lỗi,
+    // không tự đổi sang người đầu tiên.
+    val targetInvalid = initialCandidateId != null && requestedCandidate != null && candidate == null
+    val scheduledAt = java.util.Calendar.getInstance().apply {
+        timeInMillis = dateMillis
+        set(java.util.Calendar.HOUR_OF_DAY, hour)
+        set(java.util.Calendar.MINUTE, minute)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }.timeInMillis
     val scheduleBlockReason = when {
+        targetInvalid -> "Ứng viên ${requestedCandidate?.name} đang ở vòng ${requestedCandidate?.recruitmentStage?.label}, cần ở vòng Phỏng vấn mới đặt được lịch."
         candidate == null -> "Không có ứng viên nào đang ở vòng phỏng vấn."
-        scheduledAt == null -> "Ngày hoặc giờ chưa đúng định dạng."
         else -> RecruitmentRules.scheduleBlockReason(candidate, scheduledAt, interviewer, interviews)
     }
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!saving) onDismiss() },
         title = { Text("Tạo lịch phỏng vấn") },
         text = {
             Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box {
-                    OutlinedButton(shape = RoundedCornerShape(9.dp), onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                        Text(candidate?.let { "${it.name} · ${it.position}" } ?: "Chọn ứng viên", modifier = Modifier.weight(1f))
-                    }
-                    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                        candidates.forEach { item -> DropdownMenuItem(text = { Text("${item.name} · ${item.position}") }, onClick = { selectedId = item.id; expanded = false }) }
+                if (lockedCandidate && candidate != null) {
+                    Text(
+                        "Ứng viên: ${candidate.name} · ${candidate.position}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Box {
+                        OutlinedButton(shape = RoundedCornerShape(9.dp), onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text(candidate?.let { "${it.name} · ${it.position}" } ?: "Chọn ứng viên", modifier = Modifier.weight(1f))
+                        }
+                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                            candidates.forEach { item -> DropdownMenuItem(text = { Text("${item.name} · ${item.position}") }, onClick = { selectedId = item.id; expanded = false }) }
+                        }
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(date, { date = it }, label = { Text("Ngày") }, supportingText = { Text("dd/MM/yyyy") }, singleLine = true, modifier = Modifier.weight(1f))
-                    OutlinedTextField(time, { time = it }, label = { Text("Giờ") }, supportingText = { Text("HH:mm") }, singleLine = true, modifier = Modifier.weight(.7f))
+                    OutlinedButton(shape = RoundedCornerShape(9.dp), onClick = { showDatePicker = true }, modifier = Modifier.weight(1f)) {
+                        Text(SimpleDateFormat("dd/MM/yyyy", Locale.US).format(Date(dateMillis)), modifier = Modifier.weight(1f))
+                    }
+                    OutlinedButton(shape = RoundedCornerShape(9.dp), onClick = { showTimePicker = true }, modifier = Modifier.weight(.7f)) {
+                        Text(String.format(Locale.US, "%02d:%02d", hour, minute), modifier = Modifier.weight(1f))
+                    }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("Online", "Onsite").forEach { item -> FilterChip(selected = format == item, onClick = { format = item }, label = { Text(item) }) }
@@ -289,23 +316,55 @@ private fun ScheduleInterviewDialog(
                 if (scheduleBlockReason != null) {
                     Text(scheduleBlockReason, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
                 }
+                if (saveError != null) {
+                    Text(saveError, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+                }
             }
         },
         confirmButton = {
             Button(shape = RoundedCornerShape(9.dp),
-                enabled = scheduleBlockReason == null,
+                enabled = !saving && scheduleBlockReason == null,
                 onClick = {
-                    if (candidate != null && scheduledAt != null) onSave(InterviewEntity(candidateId = candidate.id, candidateName = candidate.name, position = candidate.position, scheduledAt = scheduledAt, format = format, interviewer = interviewer, round = round, checklist = checklist))
+                    if (candidate != null) onSave(InterviewEntity(candidateId = candidate.id, candidateName = candidate.name, position = candidate.position, scheduledAt = scheduledAt, format = format, interviewer = interviewer, round = round, checklist = checklist))
                 }
-            ) { Text("Lưu lịch") }
+            ) { Text(if (saving) "Đang lưu..." else "Lưu lịch") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Hủy") } }
+        dismissButton = { TextButton(onClick = { if (!saving) onDismiss() }) { Text("Hủy") } }
     )
+
+    if (showDatePicker) {
+        val pickerState = rememberDatePickerState(initialSelectedDateMillis = dateMillis)
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    pickerState.selectedDateMillis?.let { dateMillis = it }
+                    showDatePicker = false
+                }) { Text("Chọn") }
+            },
+            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Hủy") } }
+        ) { DatePicker(state = pickerState) }
+    }
+
+    if (showTimePicker) {
+        val timeState = rememberTimePickerState(initialHour = hour, initialMinute = minute, is24Hour = true)
+        AlertDialog(
+            onDismissRequest = { showTimePicker = false },
+            title = { Text("Chọn giờ phỏng vấn") },
+            text = { TimePicker(state = timeState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    hour = timeState.hour
+                    minute = timeState.minute
+                    showTimePicker = false
+                }) { Text("Chọn") }
+            },
+            dismissButton = { TextButton(onClick = { showTimePicker = false }) { Text("Hủy") } }
+        )
+    }
 }
 
-private fun parseDateTime(date: String, time: String): Long? = runCatching {
-    SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.US).apply { isLenient = false }.parse("$date $time")?.time
-}.getOrNull()
+private fun now(): Long = System.currentTimeMillis()
 
 private fun startOfToday(): Long = Calendar.getInstance().apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }.timeInMillis
 private fun endOfToday(): Long = startOfToday() + 86_400_000 - 1

@@ -15,6 +15,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.edit
 import com.hireflow.app.MainActivity
 import com.hireflow.app.data.InterviewEntity
+import com.hireflow.app.data.InterviewStatus
 
 const val INTERVIEW_CHANNEL = "interview_reminders"
 private const val REMINDER_PREFS = "interview_reminder_ids"
@@ -75,7 +76,8 @@ fun syncInterviewReminders(context: Context, interviews: List<InterviewEntity>, 
     preferences.edit { putStringSet(REMINDER_IDS, emptySet()) }
     if (!enabled) return
     val now = System.currentTimeMillis()
-    interviews.filter { !it.completed && it.scheduledAt > now }.forEach { interview ->
+    // Chỉ lịch đang lên mới giữ nhắc hẹn; đổi/hủy/vắng/hoàn thành tự gỡ khi resync.
+    interviews.filter { it.interviewStatus == InterviewStatus.SCHEDULED && it.scheduledAt > now }.forEach { interview ->
         scheduleInterviewReminder(
             context,
             interview.id,

@@ -2,6 +2,8 @@ package com.hireflow.app.domain
 
 import com.hireflow.app.data.CandidateEntity
 import com.hireflow.app.data.InterviewEntity
+import com.hireflow.app.data.InterviewStatus
+import com.hireflow.app.data.OfferResponse
 import com.hireflow.app.data.RecruitmentStage
 import com.hireflow.app.data.ScorecardEntity
 import org.junit.Assert.assertFalse
@@ -26,12 +28,47 @@ class RecruitmentRulesTest {
     }
 
     @Test
-    fun `interview candidate needs a completed interview and scorecard before decision`() {
+    fun `interview candidate needs completed sessions each with their own scorecard`() {
         val candidate = candidate(RecruitmentStage.INTERVIEW)
         val completed = interview(candidate, completed = true)
 
         assertFalse(RecruitmentRules.canAdvance(candidate, listOf(completed), emptyList()))
-        assertTrue(RecruitmentRules.canAdvance(candidate, listOf(completed), listOf(scorecard(candidate))))
+        // Phieu tong hop cu (khong gan buoi) khong mo khoa buoi moi.
+        assertFalse(RecruitmentRules.canAdvance(candidate, listOf(completed), listOf(scorecard(candidate))))
+        assertTrue(
+            RecruitmentRules.canAdvance(
+                candidate,
+                listOf(completed),
+                listOf(scorecard(candidate).copy(interviewId = completed.id))
+            )
+        )
+    }
+
+    @Test
+    fun `cancelled sessions are excluded but pending ones block closing`() {
+        val candidate = candidate(RecruitmentStage.INTERVIEW)
+        val done = interview(candidate, completed = true, id = 21)
+        val doneScore = scorecard(candidate).copy(interviewId = done.id)
+        val cancelled = interview(candidate, id = 22).copy(status = InterviewStatus.CANCELLED.name)
+        val pending = interview(candidate, id = 23)
+
+        assertTrue(RecruitmentRules.canAdvance(candidate, listOf(done, cancelled), listOf(doneScore)))
+        assertFalse(RecruitmentRules.canAdvance(candidate, listOf(done, pending), listOf(doneScore)))
+    }
+
+    @Test
+    fun `no-show sessions do not block closing once completed ones are reviewed`() {
+        val candidate = candidate(RecruitmentStage.INTERVIEW)
+        val done = interview(candidate, completed = true, id = 31)
+        val noShow = interview(candidate, id = 32).copy(status = InterviewStatus.NO_SHOW.name)
+
+        assertTrue(
+            RecruitmentRules.canAdvance(
+                candidate,
+                listOf(done, noShow),
+                listOf(scorecard(candidate).copy(interviewId = done.id))
+            )
+        )
     }
 
     @Test
@@ -54,6 +91,31 @@ class RecruitmentRulesTest {
     }
 
     @Test
+    fun `scheduling ignores cancelled sessions but blocks candidate overlap`() {
+        val candidate = candidate(RecruitmentStage.INTERVIEW)
+        val cancelled = interview(candidate, scheduledAt = now + 60_000, interviewer = "An", id = 41)
+            .copy(status = InterviewStatus.CANCELLED.name)
+        val sameCandidate = interview(candidate, scheduledAt = now + 60_000, interviewer = "Binh", id = 42)
+
+        assertTrue(RecruitmentRules.canSchedule(candidate, now + 90_000, "An", listOf(cancelled), now))
+        assertFalse(RecruitmentRules.canSchedule(candidate, now + 90_000, "Binh", listOf(sameCandidate), now))
+    }
+
+    @Test
+    fun `offer advances only after the candidate accepts`() {
+        val candidate = candidate(RecruitmentStage.OFFER)
+
+        assertFalse(RecruitmentRules.canAdvance(candidate, emptyList(), emptyList()))
+        assertTrue(
+            RecruitmentRules.canAdvance(
+                candidate.copy(offerResponse = OfferResponse.ACCEPTED.name),
+                emptyList(),
+                emptyList()
+            )
+        )
+    }
+
+    @Test
     fun `scorecard requires a completed interview and an active interview stage`() {
         val candidate = candidate(RecruitmentStage.INTERVIEW)
 
@@ -68,10 +130,21 @@ class RecruitmentRulesTest {
     }
 
     @Test
-    fun `unfinished interviews disappear after the candidate reaches a terminal stage`() {
+    fun `scorecard for a session requires that specific session completed`() {
+        val candidate = candidate(RecruitmentStage.INTERVIEW)
+        val done = interview(candidate, completed = true, id = 51)
+        val upcoming = interview(candidate, scheduledAt = now + 60_000, id = 52)
+
+        assertTrue(RecruitmentRules.canReview(candidate, listOf(done, upcoming), done.id))
+        assertFalse(RecruitmentRules.canReview(candidate, listOf(done, upcoming), upcoming.id))
+        assertFalse(RecruitmentRules.canReview(candidate, listOf(done, upcoming), 999L))
+    }
+
+    @Test
+    fun `all sessions stay visible as history`() {
         val rejected = candidate(RecruitmentStage.REJECTED)
 
-        assertFalse(RecruitmentRules.shouldShowInterview(rejected, interview(rejected)))
+        assertTrue(RecruitmentRules.shouldShowInterview(rejected, interview(rejected)))
         assertTrue(RecruitmentRules.shouldShowInterview(rejected, interview(rejected, completed = true)))
     }
 
@@ -90,16 +163,18 @@ class RecruitmentRulesTest {
         candidate: CandidateEntity,
         completed: Boolean = false,
         scheduledAt: Long = now - 60_000,
-        interviewer: String = "Interviewer"
+        interviewer: String = "Interviewer",
+        id: Long = 20
     ) = InterviewEntity(
-        id = 20,
+        id = id,
         candidateId = candidate.id,
         candidateName = candidate.name,
         position = candidate.position,
         scheduledAt = scheduledAt,
         format = "Online",
         interviewer = interviewer,
-        completed = completed
+        completed = completed,
+        status = if (completed) InterviewStatus.COMPLETED.name else InterviewStatus.SCHEDULED.name
     )
 
     private fun scorecard(candidate: CandidateEntity, conclusion: String = "Hire") = ScorecardEntity(

@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         StageHistoryEntity::class,
         HrTaskEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class HireFlowDatabase : RoomDatabase() {
@@ -29,7 +29,7 @@ abstract class HireFlowDatabase : RoomDatabase() {
                 context.applicationContext,
                 HireFlowDatabase::class.java,
                 "hireflow.db"
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build().also { instance = it }
         }
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -110,6 +110,21 @@ abstract class HireFlowDatabase : RoomDatabase() {
         private val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `candidates` ADD COLUMN `cvFileName` TEXT")
+            }
+        }
+
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Trạng thái buổi phỏng vấn, suy từ completed để giữ dữ liệu cũ.
+                db.execSQL("ALTER TABLE `interviews` ADD COLUMN `status` TEXT NOT NULL DEFAULT 'SCHEDULED'")
+                db.execSQL("UPDATE `interviews` SET `status` = CASE WHEN `completed` THEN 'COMPLETED' ELSE 'SCHEDULED' END")
+                // Phiếu gắn từng buổi; phiếu cũ giữ interviewId NULL (tổng hợp cũ).
+                db.execSQL("ALTER TABLE `scorecards` ADD COLUMN `interviewId` INTEGER")
+                db.execSQL("ALTER TABLE `scorecards` ADD COLUMN `remoteInterviewId` TEXT")
+                // Lý do đóng hồ sơ và phản hồi offer.
+                db.execSQL("ALTER TABLE `candidates` ADD COLUMN `closeReason` TEXT")
+                db.execSQL("ALTER TABLE `candidates` ADD COLUMN `offerSentAt` INTEGER")
+                db.execSQL("ALTER TABLE `candidates` ADD COLUMN `offerResponse` TEXT")
             }
         }
     }

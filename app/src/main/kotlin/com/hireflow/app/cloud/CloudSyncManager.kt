@@ -88,8 +88,18 @@ class CloudSyncManager(
         }
         repository.pendingScorecards(profile.organizationId).forEach { local ->
             val candidate = repository.candidateByLocalId(local.candidateId) ?: return@forEach
-            backend.upsertScorecard(local.toDto(profile.organizationId, candidate.remoteId, profile.id))
-            repository.updateScorecard(local.copy(organizationId = profile.organizationId, remoteCandidateId = candidate.remoteId, evaluatorId = profile.id, syncState = SyncState.SYNCED.name))
+            val remoteInterviewId = local.remoteInterviewId
+                ?: local.interviewId?.let { repository.interviewByLocalId(it)?.remoteId }
+            backend.upsertScorecard(local.toDto(profile.organizationId, candidate.remoteId, remoteInterviewId, profile.id))
+            repository.updateScorecard(
+                local.copy(
+                    organizationId = profile.organizationId,
+                    remoteCandidateId = candidate.remoteId,
+                    remoteInterviewId = remoteInterviewId,
+                    evaluatorId = profile.id,
+                    syncState = SyncState.SYNCED.name
+                )
+            )
         }
         repository.pendingHistory(profile.organizationId).forEach { local ->
             val candidate = repository.candidateByLocalId(local.candidateId) ?: return@forEach
@@ -136,7 +146,8 @@ class CloudSyncManager(
         val candidate = repository.candidateByRemoteId(remote.candidateId) ?: return
         val local = repository.scorecardByRemoteId(remote.id)
         if (local != null && SyncConflictResolver.keepLocal(local.syncState, local.updatedAt, remote.updatedAt.toEpoch())) return
-        repository.upsertScorecard(remote.toEntity(local?.id ?: 0, candidate.id))
+        val localInterviewId = remote.interviewId?.let { repository.interviewByRemoteId(it)?.id }
+        repository.upsertScorecard(remote.toEntity(local?.id ?: 0, candidate.id, localInterviewId))
     }
 }
 
@@ -144,6 +155,9 @@ private fun CandidateEntity.toDto(orgId: String) = CandidateDto(
     id = remoteId, organizationId = orgId, fullName = name, position = position,
     email = email, phone = phone, experienceYears = experienceYears, skills = skillList,
     stage = stage.lowercase(), notes = note, cvPath = remoteCvPath, cvName = cvFileName,
+    closeReason = closeReason,
+    offerSentAt = offerSentAt?.let { Instant.ofEpochMilli(it).toString() },
+    offerResponse = offerResponse?.lowercase(),
     updatedAt = Instant.ofEpochMilli(updatedAt).toString()
 )
 
@@ -152,6 +166,9 @@ private fun CandidateDto.toEntity(localId: Long, localCvUri: String?, localCvNam
     experienceYears = experienceYears, skills = skills.joinToString(", "), stage = stage.uppercase(),
     note = notes, cvUri = localCvUri, remoteId = id, organizationId = organizationId,
     remoteCvPath = cvPath, cvFileName = localCvName ?: cvName,
+    closeReason = closeReason,
+    offerSentAt = offerSentAt?.toEpoch()?.takeIf { it != 0L },
+    offerResponse = offerResponse?.uppercase(),
     updatedAt = updatedAt.toEpoch(), syncState = SyncState.SYNCED.name
 )
 
@@ -160,6 +177,7 @@ private fun InterviewEntity.toDto(orgId: String, candidateRemoteId: String) = In
     scheduledAt = Instant.ofEpochMilli(scheduledAt).toString(), durationMinutes = durationMinutes,
     format = format.lowercase(), interviewerName = interviewer, interviewerId = interviewerUserId,
     round = round, checklist = checklist.split(",").map(String::trim), completed = completed,
+    status = status.lowercase(),
     updatedAt = Instant.ofEpochMilli(updatedAt).toString()
 )
 
@@ -167,23 +185,29 @@ private fun InterviewDto.toEntity(localId: Long, localCandidateId: Long, name: S
     id = localId, candidateId = localCandidateId, candidateName = name, position = position,
     scheduledAt = scheduledAt.toEpoch(), durationMinutes = durationMinutes,
     format = format.replaceFirstChar(Char::uppercase), interviewer = interviewerName,
-    round = round, checklist = checklist.joinToString(", "), completed = completed,
+    round = round, checklist = checklist.joinToString(", "),
+    completed = completed || status == "completed",
+    status = status.uppercase().takeIf { it in setOf("SCHEDULED", "COMPLETED", "CANCELLED", "NO_SHOW") }
+        ?: if (completed) "COMPLETED" else "SCHEDULED",
     remoteId = id, remoteCandidateId = candidateId, organizationId = organizationId,
     interviewerUserId = interviewerId, updatedAt = updatedAt.toEpoch(), syncState = SyncState.SYNCED.name
 )
 
-private fun ScorecardEntity.toDto(orgId: String, candidateRemoteId: String, userId: String) = ScorecardDto(
-    id = remoteId, organizationId = orgId, candidateId = candidateRemoteId, evaluatorId = userId,
+private fun ScorecardEntity.toDto(orgId: String, candidateRemoteId: String, interviewRemoteId: String?, userId: String) = ScorecardDto(
+    id = remoteId, organizationId = orgId, candidateId = candidateRemoteId, interviewId = interviewRemoteId,
+    evaluatorId = userId,
     technical = technical, communication = communication, problemSolving = problemSolving,
     cultureFit = cultureFit, strengths = strengths, improvements = improvements, notes = notes,
     conclusion = conclusion, updatedAt = Instant.ofEpochMilli(updatedAt).toString()
 )
 
-private fun ScorecardDto.toEntity(localId: Long, localCandidateId: Long) = ScorecardEntity(
-    id = localId, candidateId = localCandidateId, technical = technical, communication = communication,
+private fun ScorecardDto.toEntity(localId: Long, localCandidateId: Long, localInterviewId: Long? = null) = ScorecardEntity(
+    id = localId, candidateId = localCandidateId, interviewId = localInterviewId,
+    technical = technical, communication = communication,
     problemSolving = problemSolving, cultureFit = cultureFit, strengths = strengths,
     improvements = improvements, notes = notes, conclusion = conclusion,
-    remoteId = id, remoteCandidateId = candidateId, organizationId = organizationId,
+    remoteId = id, remoteCandidateId = candidateId, remoteInterviewId = interviewId,
+    organizationId = organizationId,
     evaluatorId = evaluatorId, updatedAt = updatedAt.toEpoch(), syncState = SyncState.SYNCED.name
 )
 

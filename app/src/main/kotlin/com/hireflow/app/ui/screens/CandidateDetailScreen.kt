@@ -67,7 +67,9 @@ import com.hireflow.app.data.InterviewEntity
 import com.hireflow.app.data.RecruitmentStage
 import com.hireflow.app.data.ScorecardEntity
 import com.hireflow.app.data.StageHistoryEntity
+import com.hireflow.app.domain.PrimaryAction
 import com.hireflow.app.domain.RecruitmentRules
+import com.hireflow.app.domain.WorkQueue
 import com.hireflow.app.ui.components.EmptyState
 import com.hireflow.app.ui.components.InfoCard
 import com.hireflow.app.ui.components.InitialAvatar
@@ -84,16 +86,21 @@ import java.util.Locale
 fun CandidateDetailScreen(
     candidate: CandidateEntity?,
     scorecard: ScorecardEntity?,
+    candidateScorecards: List<ScorecardEntity> = emptyList(),
     interviews: List<InterviewEntity>,
     histories: List<StageHistoryEntity>,
     onBack: () -> Unit,
     onAttachCv: (Long, String) -> Unit,
     onOpenCv: (CandidateEntity, (String) -> Unit) -> Unit,
-    onUpdate: (CandidateEntity) -> Unit,
+    onUpdate: (CandidateEntity, (Boolean) -> Unit) -> Unit,
     canManage: Boolean,
-    onMoveNext: (CandidateEntity) -> Unit,
-    onReject: (CandidateEntity) -> Unit,
-    onReview: (Long) -> Unit,
+    onMoveNext: (CandidateEntity, (Boolean) -> Unit) -> Unit,
+    onReject: (CandidateEntity, String, (Boolean) -> Unit) -> Unit,
+    onReview: (Long, Long?) -> Unit,
+    onRecordResponse: (CandidateEntity, Boolean, String?, (Boolean) -> Unit) -> Unit = { _, _, _, _ -> },
+    onSchedule: (Long) -> Unit = {},
+    onOpenInterview: (Long) -> Unit = {},
+    onSetCompleted: (InterviewEntity, Boolean, (Boolean) -> Unit) -> Unit = { _, _, _ -> },
     onDelete: (CandidateEntity) -> Unit = {}
 ) {
     if (candidate == null) {
@@ -106,23 +113,68 @@ fun CandidateDetailScreen(
     val context = LocalContext.current
     var showEdit by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showRejectDialog by remember { mutableStateOf(false) }
+    var showDeclineDialog by remember { mutableStateOf(false) }
+    var pendingAction by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val isRejected = candidate.recruitmentStage == RecruitmentStage.REJECTED
-    val advanceBlockReason = RecruitmentRules.advanceBlockReason(candidate, interviews, listOfNotNull(scorecard))
+    val myInterviews = WorkQueue.interviewsOf(candidate.id, interviews)
+    val gateScorecards = candidateScorecards.ifEmpty { listOfNotNull(scorecard) }
+    val advanceBlockReason = RecruitmentRules.advanceBlockReason(candidate, interviews, gateScorecards)
     val reviewBlockReason = RecruitmentRules.reviewBlockReason(candidate, interviews)
+    val nextAction = WorkQueue.nextActionFor(candidate, interviews, gateScorecards)
     val pdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         onAttachCv(candidate.id, uri.toString())
-        scope.launch { snackbar.showSnackbar("Đã đính kèm CV PDF") }
+    }
+    fun handlePrimary() {
+        if (pendingAction) return
+        when (nextAction.action) {
+            PrimaryAction.ATTACH_CV -> pdfLauncher.launch(arrayOf("application/pdf"))
+            PrimaryAction.SCHEDULE -> onSchedule(candidate.id)
+            PrimaryAction.VIEW_INTERVIEW -> nextAction.interviewId?.let(onOpenInterview)
+            PrimaryAction.REVIEW -> onReview(candidate.id, WorkQueue.latestCompleted(candidate.id, interviews)?.id)
+            PrimaryAction.COMPLETE_AND_REVIEW -> {
+                val target = myInterviews.firstOrNull { it.id == nextAction.interviewId } ?: return
+                pendingAction = true
+                onSetCompleted(target, true) { ok ->
+                    pendingAction = false
+                    if (ok) onReview(candidate.id, target.id)
+                }
+            }
+            PrimaryAction.ADVANCE -> {
+                pendingAction = true
+                onMoveNext(candidate) { pendingAction = false }
+            }
+            PrimaryAction.RECORD_RESPONSE -> {
+                pendingAction = true
+                onRecordResponse(candidate, true, null) { pendingAction = false }
+            }
+            // DECIDE xuất hiện khi thiếu kết luận Hire/Strong Hire nên không thể gọi
+            // chuyển sang Offer (bị chặn bởi chính điều kiện đó): dẫn tới xử lý đánh giá.
+            PrimaryAction.DECIDE -> onReview(candidate.id, WorkQueue.latestCompleted(candidate.id, interviews)?.id)
+            PrimaryAction.NONE -> Unit
+        }
+    }
+    val primaryLabel = when (nextAction.action) {
+        PrimaryAction.ATTACH_CV -> "Bổ sung CV"
+        PrimaryAction.ADVANCE -> "Chuyển sang ${candidate.recruitmentStage.next().label}"
+        PrimaryAction.SCHEDULE -> "Đặt lịch phỏng vấn"
+        PrimaryAction.VIEW_INTERVIEW -> "Xem lịch phỏng vấn"
+        PrimaryAction.COMPLETE_AND_REVIEW -> "Hoàn thành & đánh giá"
+        PrimaryAction.REVIEW -> "Viết đánh giá"
+        PrimaryAction.DECIDE -> "Xem lại đánh giá"
+        PrimaryAction.RECORD_RESPONSE -> "Ghi nhận đồng ý offer"
+        PrimaryAction.NONE -> null
     }
 
     Column(Modifier.fillMaxSize()) {
         ScreenHeader("", onBack = onBack, action = {
             if (canManage) HeaderAction(Icons.Rounded.Edit, "Sửa hồ sơ") { showEdit = true }
             HeaderOverflow(buildList {
-                if (scorecard != null || reviewBlockReason == null) add("Đánh giá ứng viên" to { onReview(candidate.id) })
+                if (scorecard != null || reviewBlockReason == null) add("Đánh giá ứng viên" to { onReview(candidate.id, null) })
                 if (canManage) add("Đính kèm CV" to { pdfLauncher.launch(arrayOf("application/pdf")) })
                 if (canManage && isRejected) add("Xóa ứng viên" to { showDeleteDialog = true })
             })
@@ -137,6 +189,29 @@ fun CandidateDetailScreen(
                             Text(candidate.name, style = MaterialTheme.typography.titleLarge)
                             Text(candidate.position, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             StagePill(candidate.recruitmentStage)
+                        }
+                    }
+
+                    InfoCard(Modifier.fillMaxWidth()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(nextAction.headline, style = MaterialTheme.typography.titleMedium)
+                            if (nextAction.detail != null) {
+                                Text(nextAction.detail, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (primaryLabel != null && canManage) {
+                                Button(
+                                    shape = RoundedCornerShape(9.dp),
+                                    onClick = ::handlePrimary,
+                                    enabled = !pendingAction,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(if (pendingAction) "Đang xử lý..." else primaryLabel, modifier = Modifier.weight(1f))
+                                    Icon(Icons.AutoMirrored.Rounded.ArrowForward, null)
+                                }
+                            }
+                            if (advanceBlockReason != null && nextAction.action != PrimaryAction.NONE) {
+                                Text(advanceBlockReason, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+                            }
                         }
                     }
 
@@ -220,6 +295,50 @@ fun CandidateDetailScreen(
                         }
                     }
 
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SectionTitle(
+                            "Lịch phỏng vấn",
+                            actionText = if (canManage && candidate.recruitmentStage == RecruitmentStage.INTERVIEW) "Đặt lịch" else null,
+                            onAction = { onSchedule(candidate.id) }
+                        )
+                        if (myInterviews.isEmpty()) {
+                            InfoCard(Modifier.fillMaxWidth()) {
+                                Text(
+                                    if (candidate.recruitmentStage == RecruitmentStage.INTERVIEW) "Chưa có buổi nào. Đặt lịch ngay trên hồ sơ."
+                                    else "Chưa có lịch phỏng vấn.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        } else {
+                            myInterviews.forEach { interview ->
+                                InfoCard(Modifier.fillMaxWidth().clickable { onOpenInterview(interview.id) }) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                            Text(interview.round, style = MaterialTheme.typography.titleMedium)
+                                            Text(
+                                                SimpleDateFormat("HH:mm dd/MM/yyyy", Locale.forLanguageTag("vi-VN")).format(Date(interview.scheduledAt)) +
+                                                    " · ${interview.interviewer}",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(
+                                                interview.interviewStatus.label,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = when (interview.interviewStatus) {
+                                                    com.hireflow.app.data.InterviewStatus.COMPLETED -> MaterialTheme.colorScheme.primary
+                                                    com.hireflow.app.data.InterviewStatus.SCHEDULED -> MaterialTheme.colorScheme.error
+                                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                                }
+                                            )
+                                        }
+                                        Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     if (scorecard != null) {
                         InfoCard(Modifier.fillMaxWidth()) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -240,12 +359,14 @@ fun CandidateDetailScreen(
                                 val from = runCatching { RecruitmentStage.valueOf(history.fromStage).label }.getOrDefault(history.fromStage)
                                 val to = runCatching { RecruitmentStage.valueOf(history.toStage).label }.getOrDefault(history.toStage)
                                 InfoCard(Modifier.fillMaxWidth()) {
-                                    Text("$from → $to", style = MaterialTheme.typography.titleMedium)
-                                    Text(
-                                        SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.forLanguageTag("vi-VN")).format(Date(history.changedAt)),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("$from → $to", style = MaterialTheme.typography.titleMedium)
+                                        Text(
+                                            SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.forLanguageTag("vi-VN")).format(Date(history.changedAt)),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -253,7 +374,7 @@ fun CandidateDetailScreen(
 
                     FilledTonalButton(
                         shape = RoundedCornerShape(9.dp),
-                        onClick = { onReview(candidate.id) },
+                        onClick = { onReview(candidate.id, null) },
                         enabled = scorecard != null || reviewBlockReason == null,
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -264,15 +385,63 @@ fun CandidateDetailScreen(
                     if (scorecard == null && reviewBlockReason != null) {
                         Text(reviewBlockReason, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
                     }
+                    if (canManage && candidate.recruitmentStage == RecruitmentStage.OFFER) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SectionTitle("Phản hồi offer")
+                            InfoCard(Modifier.fillMaxWidth()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                    if (candidate.offerSentAt != null) {
+                                        Text(
+                                            "Đã gửi offer: ${
+                                                SimpleDateFormat("dd/MM/yyyy", Locale.forLanguageTag("vi-VN")).format(Date(candidate.offerSentAt))
+                                            }",
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                    }
+                                    Text(
+                                        when (candidate.offerResponse) {
+                                            com.hireflow.app.data.OfferResponse.ACCEPTED.name -> "Ứng viên đã đồng ý. Chuyển sang Đã tuyển để kết thúc."
+                                            else -> "Ghi nhận kết quả HR đã trao đổi bên ngoài. App không giả lập gửi email."
+                                        },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    shape = RoundedCornerShape(9.dp),
+                                    onClick = {
+                                        pendingAction = true
+                                        onRecordResponse(candidate, true, null) { pendingAction = false }
+                                    },
+                                    enabled = !pendingAction && candidate.offerResponse != com.hireflow.app.data.OfferResponse.ACCEPTED.name,
+                                    modifier = Modifier.weight(1f)
+                                ) { Text(if (pendingAction) "Đang lưu..." else "Ứng viên đồng ý") }
+                                OutlinedButton(
+                                    shape = RoundedCornerShape(9.dp),
+                                    onClick = { showDeclineDialog = true },
+                                    enabled = !pendingAction,
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Ứng viên từ chối", color = MaterialTheme.colorScheme.error) }
+                            }
+                        }
+                    }
+                    if (canManage && isRejected && candidate.closeReason != null) {
+                        InfoCard(Modifier.fillMaxWidth()) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("Lý do đóng hồ sơ", style = MaterialTheme.typography.titleMedium)
+                                Text(candidate.closeReason, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
                     if (canManage && candidate.recruitmentStage != RecruitmentStage.HIRED && candidate.recruitmentStage != RecruitmentStage.REJECTED) {
-                        Button(shape = RoundedCornerShape(9.dp), onClick = { onMoveNext(candidate) }, enabled = advanceBlockReason == null, modifier = Modifier.fillMaxWidth()) {
-                            Text("Chuyển sang ${candidate.recruitmentStage.next().label}", modifier = Modifier.weight(1f))
-                            Icon(Icons.AutoMirrored.Rounded.ArrowForward, null)
-                        }
-                        if (advanceBlockReason != null) {
-                            Text(advanceBlockReason, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
-                        }
-                        OutlinedButton(shape = RoundedCornerShape(9.dp), onClick = { onReject(candidate) }, modifier = Modifier.fillMaxWidth()) { Text("Từ chối ứng viên", color = MaterialTheme.colorScheme.error) }
+                        OutlinedButton(
+                            shape = RoundedCornerShape(9.dp),
+                            onClick = { showRejectDialog = true },
+                            enabled = !pendingAction,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Từ chối ứng viên", color = MaterialTheme.colorScheme.error) }
                     }
                     if (canManage && isRejected) {
                         OutlinedButton(
@@ -291,16 +460,57 @@ fun CandidateDetailScreen(
             }
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
         }
+        if (primaryLabel != null && canManage) {
+            androidx.compose.material3.Surface(shadowElevation = 4.dp) {
+                Box(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                    Button(
+                        shape = RoundedCornerShape(9.dp),
+                        onClick = ::handlePrimary,
+                        enabled = !pendingAction,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (pendingAction) "Đang xử lý..." else primaryLabel, modifier = Modifier.weight(1f))
+                        Icon(Icons.AutoMirrored.Rounded.ArrowForward, null)
+                    }
+                }
+            }
+        }
 
     }
 
     if (showEdit) EditCandidateDialog(
         candidate = candidate,
         onDismiss = { showEdit = false },
-        onSave = {
-            onUpdate(it)
-            showEdit = false
-            scope.launch { snackbar.showSnackbar("Đã cập nhật hồ sơ ứng viên") }
+        onSave = { updated, onError ->
+            onUpdate(updated) { ok ->
+                if (ok) showEdit = false else onError("Không thể cập nhật hồ sơ.")
+            }
+        }
+    )
+
+    if (showRejectDialog) CloseReasonDialog(
+        title = "Từ chối ${candidate.name}?",
+        confirmLabel = "Từ chối",
+        onDismiss = { showRejectDialog = false },
+        onConfirm = { reason ->
+            pendingAction = true
+            onReject(candidate, reason) { ok ->
+                pendingAction = false
+                if (ok) showRejectDialog = false
+            }
+        }
+    )
+
+    if (showDeclineDialog) CloseReasonDialog(
+        title = "Ứng viên từ chối offer?",
+        confirmLabel = "Ghi nhận từ chối",
+        onDismiss = { showDeclineDialog = false },
+        onConfirm = { reason ->
+            pendingAction = true
+            onRecordResponse(candidate, false, reason) { ok ->
+                pendingAction = false
+                if (ok) showDeclineDialog = false
+            }
         }
     )
 
@@ -324,6 +534,40 @@ fun CandidateDetailScreen(
 }
 
 @Composable
+private fun CloseReasonDialog(title: String, confirmLabel: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var reason by rememberSaveable { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Ghi rõ lý do để phân biệt HR loại, ứng viên rút và từ chối offer. Lịch còn hiệu lực sẽ được hủy, lịch sử giữ lại.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    reason,
+                    { reason = it },
+                    label = { Text("Lý do *") },
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                shape = RoundedCornerShape(9.dp),
+                enabled = reason.isNotBlank(),
+                onClick = { onConfirm(reason.trim()) },
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) { Text(confirmLabel) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Hủy") } }
+    )
+}
+
+@Composable
 private fun ContactLine(icon: ImageVector, text: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
@@ -333,7 +577,7 @@ private fun ContactLine(icon: ImageVector, text: String) {
 }
 
 @Composable
-private fun EditCandidateDialog(candidate: CandidateEntity, onDismiss: () -> Unit, onSave: (CandidateEntity) -> Unit) {
+private fun EditCandidateDialog(candidate: CandidateEntity, onDismiss: () -> Unit, onSave: (CandidateEntity, (String) -> Unit) -> Unit) {
     var name by rememberSaveable(candidate.id) { mutableStateOf(candidate.name) }
     var position by rememberSaveable(candidate.id) { mutableStateOf(candidate.position) }
     var email by rememberSaveable(candidate.id) { mutableStateOf(candidate.email) }
@@ -341,8 +585,10 @@ private fun EditCandidateDialog(candidate: CandidateEntity, onDismiss: () -> Uni
     var experience by rememberSaveable(candidate.id) { mutableStateOf(candidate.experienceYears.toString()) }
     var skills by rememberSaveable(candidate.id) { mutableStateOf(candidate.skills) }
     var note by rememberSaveable(candidate.id) { mutableStateOf(candidate.note) }
+    var saving by rememberSaveable(candidate.id) { mutableStateOf(false) }
+    var saveError by rememberSaveable(candidate.id) { mutableStateOf<String?>(null) }
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!saving) onDismiss() },
         title = { Text("Chỉnh sửa hồ sơ") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -353,15 +599,25 @@ private fun EditCandidateDialog(candidate: CandidateEntity, onDismiss: () -> Uni
                 EditField(experience, { experience = it.filter(Char::isDigit) }, "Số năm kinh nghiệm")
                 EditField(skills, { skills = it }, "Kỹ năng")
                 OutlinedTextField(note, { note = it }, label = { Text("Ghi chú nội bộ") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+                if (saveError != null) {
+                    Text(saveError!!, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+                }
             }
         },
         confirmButton = {
             Button(shape = RoundedCornerShape(9.dp),
-                enabled = name.isNotBlank() && position.isNotBlank() && skills.isNotBlank() && experience.toIntOrNull() != null,
-                onClick = { onSave(candidate.copy(name = name.trim(), position = position.trim(), email = email.trim(), phone = phone.trim(), experienceYears = experience.toIntOrNull() ?: 0, skills = skills.trim(), note = note.trim())) }
-            ) { Text("Lưu thay đổi") }
+                enabled = !saving && name.isNotBlank() && position.isNotBlank() && skills.isNotBlank() && experience.toIntOrNull() != null,
+                onClick = {
+                    saving = true
+                    saveError = null
+                    onSave(candidate.copy(name = name.trim(), position = position.trim(), email = email.trim(), phone = phone.trim(), experienceYears = experience.toIntOrNull() ?: 0, skills = skills.trim(), note = note.trim())) { message ->
+                        saving = false
+                        saveError = message
+                    }
+                }
+            ) { Text(if (saving) "Đang lưu..." else "Lưu thay đổi") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Hủy") } }
+        dismissButton = { TextButton(onClick = { if (!saving) onDismiss() }) { Text("Hủy") } }
     )
 }
 

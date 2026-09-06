@@ -236,7 +236,7 @@ fun InfoCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .75f)),
         elevation = CardDefaults.cardElevation(0.dp)
-    ) { Box(Modifier.padding(16.dp)) { content() } }
+    ) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { content() } }
 }
 
 @Composable

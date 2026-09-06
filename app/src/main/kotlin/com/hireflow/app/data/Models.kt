@@ -7,6 +7,18 @@ import java.util.UUID
 
 enum class SyncState { PENDING, SYNCED, FAILED }
 
+enum class InterviewStatus(val label: String) {
+    SCHEDULED("Đã lên lịch"),
+    COMPLETED("Đã hoàn thành"),
+    CANCELLED("Đã hủy"),
+    NO_SHOW("Vắng mặt")
+}
+
+enum class OfferResponse(val label: String) {
+    ACCEPTED("Đồng ý offer"),
+    DECLINED("Từ chối offer")
+}
+
 enum class RecruitmentStage(val label: String) {
     APPLIED("Ứng tuyển"),
     SCREENING("Sàng lọc"),
@@ -43,6 +55,9 @@ data class CandidateEntity(
     val organizationId: String? = null,
     val remoteCvPath: String? = null,
     val cvFileName: String? = null,
+    val closeReason: String? = null,
+    val offerSentAt: Long? = null,
+    val offerResponse: String? = null,
     @ColumnInfo(defaultValue = "0") val updatedAt: Long = System.currentTimeMillis(),
     @ColumnInfo(defaultValue = "'PENDING'") val syncState: String = SyncState.PENDING.name
 ) {
@@ -65,18 +80,25 @@ data class InterviewEntity(
     val round: String = "Vòng 1: HR",
     val checklist: String = "Giới thiệu bản thân, Kinh nghiệm liên quan, Tình huống thực tế",
     val completed: Boolean = false,
+    @ColumnInfo(defaultValue = "'SCHEDULED'") val status: String = InterviewStatus.SCHEDULED.name,
     @ColumnInfo(defaultValue = "''") val remoteId: String = UUID.randomUUID().toString(),
     val remoteCandidateId: String? = null,
     val organizationId: String? = null,
     val interviewerUserId: String? = null,
     @ColumnInfo(defaultValue = "0") val updatedAt: Long = System.currentTimeMillis(),
     @ColumnInfo(defaultValue = "'PENDING'") val syncState: String = SyncState.PENDING.name
-)
+) {
+    val interviewStatus: InterviewStatus
+        get() = runCatching { InterviewStatus.valueOf(status) }.getOrDefault(InterviewStatus.SCHEDULED)
+}
 
 @Entity(tableName = "scorecards")
 data class ScorecardEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val candidateId: Long,
+    // Buổi phỏng vấn được đánh giá. Null = phiếu tổng hợp cũ (trước đợt 3),
+    // vẫn đọc được nhưng không thỏa điều kiện đánh giá buổi mới.
+    val interviewId: Long? = null,
     val technical: Int,
     val communication: Int,
     val problemSolving: Int,
@@ -88,6 +110,7 @@ data class ScorecardEntity(
     val createdAt: Long = System.currentTimeMillis(),
     @ColumnInfo(defaultValue = "''") val remoteId: String = UUID.randomUUID().toString(),
     val remoteCandidateId: String? = null,
+    val remoteInterviewId: String? = null,
     val organizationId: String? = null,
     val evaluatorId: String? = null,
     @ColumnInfo(defaultValue = "0") val updatedAt: Long = System.currentTimeMillis(),
@@ -95,6 +118,8 @@ data class ScorecardEntity(
 ) {
     val average: Double
         get() = (technical + communication + problemSolving + cultureFit) / 4.0
+    val isLegacy: Boolean
+        get() = interviewId == null
 }
 
 @Entity(tableName = "stage_history")

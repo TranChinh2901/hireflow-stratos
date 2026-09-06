@@ -7,6 +7,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,7 +49,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,7 +73,6 @@ import com.hireflow.app.ui.theme.Danger
 import com.hireflow.app.ui.theme.Purple
 import com.hireflow.app.ui.theme.Success
 import com.hireflow.app.ui.theme.Warning
-import kotlinx.coroutines.launch
 
 @Composable
 fun ScorecardScreen(
@@ -81,34 +81,59 @@ fun ScorecardScreen(
     scorecards: List<ScorecardEntity>,
     evaluatorId: String?,
     initialCandidateId: Long?,
-    onSave: (ScorecardEntity) -> Unit,
+    lockedCandidate: Boolean = false,
+    interviewId: Long? = null,
+    onSave: (ScorecardEntity, (Boolean) -> Unit) -> Unit,
     onBack: (() -> Unit)?
 ) {
     val evaluatorScorecards = scorecards.filter { it.evaluatorId == evaluatorId }
+    val requestedCandidate = initialCandidateId?.let { id -> candidates.firstOrNull { it.id == id } }
+    val navigate = LocalHeaderNavigation.current
+    // Không fallback sang người khác: ID cụ thể mà không tồn tại thì báo lỗi có Back.
+    if (initialCandidateId != null && requestedCandidate == null) {
+        Column(Modifier.fillMaxSize()) {
+            ScreenHeader("Đánh giá phỏng vấn", onBack = onBack ?: { navigate("dashboard") })
+            EmptyState(Icons.Rounded.Badge, "Không tìm thấy ứng viên", "Hồ sơ có thể đã được cập nhật. Quay lại và thử lại.")
+        }
+        return
+    }
     val availableCandidates = candidates.filter { candidate ->
         RecruitmentRules.canReview(candidate, interviews) || evaluatorScorecards.any { it.candidateId == candidate.id }
     }
-    var selectedId by rememberSaveable(initialCandidateId, availableCandidates.firstOrNull()?.id) {
+    var selectedId by rememberSaveable(initialCandidateId) {
         mutableStateOf(
             initialCandidateId?.takeIf { id -> availableCandidates.any { it.id == id } }
                 ?: availableCandidates.firstOrNull()?.id
         )
     }
-    val candidate = availableCandidates.firstOrNull { it.id == selectedId }
-    val existing = evaluatorScorecards.firstOrNull { it.candidateId == selectedId }
+    val candidate = (if (lockedCandidate) requestedCandidate else availableCandidates.firstOrNull { it.id == selectedId })
+    val ownerId = candidate?.id
+    val completedSessions = ownerId?.let { id ->
+        interviews.filter { it.candidateId == id && it.interviewStatus == com.hireflow.app.data.InterviewStatus.COMPLETED }
+            .sortedByDescending { it.scheduledAt }
+    }.orEmpty()
+    var selectedInterviewId by rememberSaveable(ownerId, interviewId) {
+        mutableStateOf(
+            interviewId?.takeIf { id -> completedSessions.any { it.id == id } }
+                ?: completedSessions.firstOrNull()?.id
+        )
+    }
+    val contextInterview = completedSessions.firstOrNull { it.id == selectedInterviewId }
+    val existing = evaluatorScorecards.firstOrNull { it.candidateId == ownerId && it.interviewId == selectedInterviewId }
+    val formKey = "$ownerId-$selectedInterviewId"
     var blindMode by rememberSaveable { mutableStateOf(true) }
     var expanded by remember { mutableStateOf(false) }
-    var technical by rememberSaveable(selectedId) { mutableIntStateOf(existing?.technical ?: 0) }
-    var communication by rememberSaveable(selectedId) { mutableIntStateOf(existing?.communication ?: 0) }
-    var problemSolving by rememberSaveable(selectedId) { mutableIntStateOf(existing?.problemSolving ?: 0) }
-    var cultureFit by rememberSaveable(selectedId) { mutableIntStateOf(existing?.cultureFit ?: 0) }
-    var strengths by rememberSaveable(selectedId) { mutableStateOf(existing?.strengths.orEmpty()) }
-    var improvements by rememberSaveable(selectedId) { mutableStateOf(existing?.improvements.orEmpty()) }
-    var notes by rememberSaveable(selectedId) { mutableStateOf(existing?.notes.orEmpty()) }
-    var conclusion by rememberSaveable(selectedId) { mutableStateOf(existing?.conclusion.orEmpty()) }
+    var technical by rememberSaveable(formKey) { mutableIntStateOf(existing?.technical ?: 0) }
+    var communication by rememberSaveable(formKey) { mutableIntStateOf(existing?.communication ?: 0) }
+    var problemSolving by rememberSaveable(formKey) { mutableIntStateOf(existing?.problemSolving ?: 0) }
+    var cultureFit by rememberSaveable(formKey) { mutableIntStateOf(existing?.cultureFit ?: 0) }
+    var strengths by rememberSaveable(formKey) { mutableStateOf(existing?.strengths.orEmpty()) }
+    var improvements by rememberSaveable(formKey) { mutableStateOf(existing?.improvements.orEmpty()) }
+    var notes by rememberSaveable(formKey) { mutableStateOf(existing?.notes.orEmpty()) }
+    var conclusion by rememberSaveable(formKey) { mutableStateOf(existing?.conclusion.orEmpty()) }
+    var saving by rememberSaveable(formKey) { mutableStateOf(false) }
+    var saveError by rememberSaveable(formKey) { mutableStateOf<String?>(null) }
     val snackbar = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
-    val navigate = LocalHeaderNavigation.current
 
     Column(Modifier.fillMaxSize().imePadding()) {
         ScreenHeader("Đánh giá phỏng vấn", onBack = onBack ?: { navigate("dashboard") }, action = {
@@ -135,8 +160,58 @@ fun ScorecardScreen(
                     }
 
                     if (candidate == null) {
-                        EmptyState(Icons.Rounded.Badge, "Chưa có ứng viên cần đánh giá", "Hoàn thành một lịch phỏng vấn trước khi tạo scorecard.")
+                        if (lockedCandidate) {
+                            EmptyState(Icons.Rounded.Badge, "Ứng viên chưa thể đánh giá", "Ứng viên cần ở vòng phỏng vấn/chờ quyết định và đã hoàn thành một lịch phỏng vấn.")
+                        } else {
+                            EmptyState(Icons.Rounded.Badge, "Chưa có ứng viên cần đánh giá", "Hoàn thành một lịch phỏng vấn trước khi tạo scorecard.")
+                        }
                     } else {
+                        if (completedSessions.size > 1) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                SectionTitle("Chấm cho buổi")
+                                Row(
+                                    Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    completedSessions.forEach { session ->
+                                        androidx.compose.material3.FilterChip(
+                                            selected = selectedInterviewId == session.id,
+                                            onClick = { selectedInterviewId = session.id },
+                                            label = {
+                                                Text(
+                                                    "${session.round} · ${
+                                                        java.text.SimpleDateFormat("HH:mm dd/MM", java.util.Locale.forLanguageTag("vi-VN"))
+                                                            .format(java.util.Date(session.scheduledAt))
+                                                    }"
+                                                )
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        } else if (contextInterview != null) {
+                            Text(
+                                "Đánh giá cho buổi ${contextInterview.round} · ${
+                                    java.text.SimpleDateFormat("HH:mm dd/MM/yyyy", java.util.Locale.forLanguageTag("vi-VN"))
+                                        .format(java.util.Date(contextInterview.scheduledAt))
+                                }",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (lockedCandidate) {
+                            InfoCard(Modifier.fillMaxWidth()) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    InitialAvatar(candidate.name, Modifier.size(36.dp), blind = blindMode)
+                                    Spacer(Modifier.size(12.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(if (blindMode) "Ứng viên #${candidate.id.toString().padStart(3, '0')}" else candidate.name, style = MaterialTheme.typography.titleMedium)
+                                        Text(candidate.position, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("${candidate.experienceYears} năm · ${candidate.skillList.take(3).joinToString(" · ")}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                            }
+                        } else {
                         Box {
                             InfoCard(Modifier.fillMaxWidth().clickable { expanded = true }) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -158,6 +233,7 @@ fun ScorecardScreen(
                                     )
                                 }
                             }
+                        }
                         }
 
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -195,25 +271,39 @@ fun ScorecardScreen(
                 shadowElevation = 4.dp
             ) {
                 Box(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-                        Button(shape = RoundedCornerShape(9.dp),
-                            onClick = {
-                                val newScorecard = ScorecardEntity(candidateId = candidate.id, technical = technical, communication = communication, problemSolving = problemSolving, cultureFit = cultureFit, strengths = strengths, improvements = improvements, notes = notes, conclusion = conclusion)
-                                onSave(if (existing == null) newScorecard else newScorecard.copy(
-                                    id = existing.id,
-                                    remoteId = existing.remoteId,
-                                    remoteCandidateId = existing.remoteCandidateId,
-                                    organizationId = existing.organizationId,
-                                    evaluatorId = existing.evaluatorId
-                                ))
-                                scope.launch { snackbar.showSnackbar("Đã lưu phiếu đánh giá cho ${if (blindMode) "ứng viên #${candidate.id}" else candidate.name}") }
-                            },
-                            enabled = listOf(technical, communication, problemSolving, cultureFit).all { it in 1..5 } &&
-                                conclusion.isNotBlank() && RecruitmentRules.canReview(candidate, interviews),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Rounded.Check, null)
-                            Spacer(Modifier.size(7.dp))
-                            Text("Lưu đánh giá")
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (saveError != null) {
+                                Text(saveError!!, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+                            }
+                            Button(shape = RoundedCornerShape(9.dp),
+                                onClick = {
+                                    saving = true
+                                    saveError = null
+                                    val newScorecard = ScorecardEntity(candidateId = candidate.id, interviewId = selectedInterviewId, technical = technical, communication = communication, problemSolving = problemSolving, cultureFit = cultureFit, strengths = strengths, improvements = improvements, notes = notes, conclusion = conclusion)
+                                    onSave(if (existing == null) newScorecard else newScorecard.copy(
+                                        id = existing.id,
+                                        remoteId = existing.remoteId,
+                                        remoteCandidateId = existing.remoteCandidateId,
+                                        organizationId = existing.organizationId,
+                                        evaluatorId = existing.evaluatorId
+                                    )) { ok ->
+                                        saving = false
+                                        if (ok) {
+                                            if (lockedCandidate) onBack?.invoke() ?: navigate("dashboard")
+                                        } else {
+                                            saveError = "Không thể lưu phiếu đánh giá. Nội dung đã được giữ lại."
+                                        }
+                                    }
+                                },
+                                enabled = !saving && (selectedInterviewId != null || existing?.isLegacy == true) &&
+                                    listOf(technical, communication, problemSolving, cultureFit).all { it in 1..5 } &&
+                                    conclusion.isNotBlank() && RecruitmentRules.canReview(candidate, interviews, selectedInterviewId),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Rounded.Check, null)
+                                Spacer(Modifier.size(7.dp))
+                                Text(if (saving) "Đang lưu..." else "Lưu đánh giá")
+                            }
                         }
                 }
             }
